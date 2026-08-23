@@ -163,13 +163,22 @@ export default function LandingPage() {
           Réservé aux créatrices majeures. En vous inscrivant, vous confirmez avoir
           18 ans ou plus et respecter les conditions des plateformes que vous utilisez.
         </p>
-        <p className="flex items-center justify-center gap-4">
+        <p className="flex flex-wrap items-center justify-center gap-4">
+          <Link href="/comment-ca-marche" className="underline underline-offset-4 hover:text-foreground transition">
+            Comment ça marche
+          </Link>
           <Link href="/terms" className="underline underline-offset-4 hover:text-foreground transition">
             Conditions d&apos;utilisation
           </Link>
           <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground transition">
             Confidentialité
           </Link>
+          <a
+            href="mailto:jmsventurecapital@gmail.com"
+            className="underline underline-offset-4 hover:text-foreground transition"
+          >
+            Nous contacter
+          </a>
         </p>
       </footer>
     </main>

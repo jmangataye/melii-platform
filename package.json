@@ -12,6 +12,7 @@
     "web:build": "npm run build --workspace=apps/web",
     "bot:dev": "npm run dev --workspace=apps/bot-runner",
     "bot:build": "npm run build --workspace=apps/bot-runner",
-    "purge:conversations": "node apps/web/scripts/purge-conversations.js"
+    "purge:conversations": "node apps/web/scripts/purge-conversations.js",
+    "test": "node --test packages/db/test/**/*.test.js"
   }
 }

@@ -19,6 +19,8 @@ export interface Creator {
   subscriptionPlan: string | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
+  avatarUrl: string | null;
+  accentColor: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,7 +74,9 @@ export function verifyPassword(password: string, stored: string): boolean;
 export function createCreator(input: { email: string; password: string; displayName: string; ageConfirmed: boolean }): Promise<Creator>;
 export function getCreatorByEmail(email: string): Promise<Creator | null>;
 export function getCreatorById(id: string): Promise<Creator | null>;
+export function deleteCreator(id: string): Promise<boolean>;
 export function updateCreatorPersona(id: string, input: { tone: string; bio: string; displayName: string }): Promise<Creator>;
+export function updateCreatorProfile(id: string, input: { avatarUrl: string | null; accentColor: string | null }): Promise<Creator>;
 export function updateCreatorTelegram(id: string, input: { token: string | null; username: string | null; webhookSecret: string | null; webhookReady: boolean }): Promise<Creator>;
 export function updateCreatorPasswordHash(id: string, passwordHash: string): Promise<void>;
 export function updateCreatorSubscription(id: string, input: { status?: string; plan?: string | null; stripeCustomerId?: string | null; stripeSubscriptionId?: string | null }): Promise<Creator | null>;

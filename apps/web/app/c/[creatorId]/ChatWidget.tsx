@@ -23,9 +23,11 @@ function getOrCreateVisitorId(creatorId: string): string {
 export default function ChatWidget({
   creatorId,
   displayName,
+  accentColor,
 }: {
   creatorId: string;
   displayName: string;
+  accentColor?: string | null;
 }) {
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -105,6 +107,7 @@ export default function ChatWidget({
                 ? "ml-auto rounded-br-sm gradient-btn text-white"
                 : "rounded-bl-sm bg-surface-2"
             }`}
+            style={m.role === "user" && accentColor ? { background: accentColor } : undefined}
           >
             {m.content}
           </div>
@@ -134,6 +137,7 @@ export default function ChatWidget({
           type="submit"
           disabled={!input.trim() || sending || !chatId}
           className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60 shrink-0"
+          style={accentColor ? { background: accentColor } : undefined}
         >
           Envoyer
         </button>

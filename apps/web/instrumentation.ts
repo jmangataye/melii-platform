@@ -42,3 +42,20 @@ export async function register() {
   setTimeout(runPurge, FIRST_RUN_DELAY_MS).unref?.();
   setInterval(runPurge, PURGE_INTERVAL_MS).unref?.();
 }
+
+// Sans outil externe (Sentry ou équivalent) branché, une erreur serveur en
+// pleine conversation avec un abonné passe complètement inaperçue — il faut
+// aller la chercher manuellement dans les logs Render. Ce hook ne remplace
+// pas un vrai outil de suivi d'erreurs, mais il rend chaque erreur beaucoup
+// plus facile à repérer/chercher dans les logs (préfixe fixe + contexte de
+// la requête), sans dépendre d'un compte tiers.
+export const onRequestError = async (
+  err: unknown,
+  request: { path: string; method: string },
+  context: { routerKind: string; routePath: string; routeType: string }
+) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(
+    `[server-error] ${request.method} ${request.path} (${context.routeType} @ ${context.routePath}) — ${message}`
+  );
+};

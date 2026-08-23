@@ -22,6 +22,8 @@ export async function GET() {
       telegramBotUsername: creator.telegramBotUsername,
       telegramWebhookReady: creator.telegramWebhookReady,
       hasTelegramToken: !!creator.telegramBotToken,
+      avatarUrl: creator.avatarUrl,
+      accentColor: creator.accentColor,
     },
     isAdmin: isAdminEmail(creator.email),
     tiers,

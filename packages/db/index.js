@@ -82,6 +82,8 @@ function rowToCreator(row) {
     subscriptionPlan: row.subscription_plan,
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
+    avatarUrl: row.avatar_url,
+    accentColor: row.accent_color,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -112,12 +114,36 @@ async function getCreatorById(creatorId) {
   return rowToCreator(rows[0]);
 }
 
+// Suppression définitive d'un compte créatrice — utilisée par l'admin pour
+// honorer une demande de suppression de données (voir /privacy). Toutes les
+// tables liées (paliers, clics, ventes, messages, jetons de réinitialisation)
+// ont une contrainte ON DELETE CASCADE sur creator_id, donc un seul DELETE
+// sur creators suffit à tout nettoyer. Renvoie true si un compte a bien été
+// supprimé, false si l'id ne correspondait à rien.
+async function deleteCreator(creatorId) {
+  const { rowCount } = await query("DELETE FROM creators WHERE id = $1", [creatorId]);
+  return rowCount > 0;
+}
+
 async function updateCreatorPersona(creatorId, { tone, bio, displayName }) {
   await query(
     `UPDATE creators
      SET persona_tone = $1, persona_bio = $2, display_name = $3, updated_at = now()
      WHERE id = $4`,
     [tone, bio, displayName, creatorId]
+  );
+  return getCreatorById(creatorId);
+}
+
+// Personnalisation visuelle légère : une URL de photo (hébergée ailleurs —
+// pas de stockage de fichiers côté Melii) et une couleur d'accent, affichées
+// sur le dashboard de la créatrice et sur sa page de chat publique.
+async function updateCreatorProfile(creatorId, { avatarUrl, accentColor }) {
+  await query(
+    `UPDATE creators
+     SET avatar_url = $1, accent_color = $2, updated_at = now()
+     WHERE id = $3`,
+    [avatarUrl || null, accentColor || null, creatorId]
   );
   return getCreatorById(creatorId);
 }
@@ -427,7 +453,9 @@ module.exports = {
   createCreator,
   getCreatorByEmail,
   getCreatorById,
+  deleteCreator,
   updateCreatorPersona,
+  updateCreatorProfile,
   updateCreatorTelegram,
   updateCreatorPasswordHash,
   updateCreatorSubscription,

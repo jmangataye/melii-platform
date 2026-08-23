@@ -84,6 +84,23 @@ En local, Telegram ne peut pas joindre `http://localhost` (il lui faut une
 URL publique en HTTPS) — utilisez un tunnel type `ngrok` pour tester la
 connexion Telegram en local, ou testez directement en déploiement.
 
+## Tests
+
+```bash
+DATABASE_URL=postgresql://user:password@localhost:5432/melii_test npm test
+```
+
+Utilisez une base **dédiée aux tests**, pas votre base de développement — les
+tests créent et suppriment de vraies créatrices/paliers/ventes. Le schéma
+doit déjà exister dans cette base (`psql ... -f packages/db/schema.sql`).
+
+Deux familles de tests : des tests purs sur le moteur de personnalité et les
+garde-fous de sécurité (aucune base requise), et des tests d'intégration sur
+toute la couche `@melii/db` (création de compte, paliers, ventes, purge de
+conversation, vue admin, suppression de compte...). Pas encore de tests sur
+les routes HTTP elles-mêmes — à faire avant d'ajouter beaucoup plus de
+logique dans les route handlers.
+
 ## Mettre le code sur GitHub (préalable au déploiement)
 
 1. Créez un compte sur [github.com](https://github.com/signup) si vous n'en

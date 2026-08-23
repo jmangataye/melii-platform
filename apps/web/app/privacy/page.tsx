@@ -50,8 +50,7 @@ export default function PrivacyPage() {
             <h2 className="text-foreground font-medium mb-2">3. Conservation</h2>
             <p>
               L&apos;historique de conversation est purgé automatiquement au-delà
-              d&apos;une durée définie (voir le code source pour la valeur
-              actuelle). Les données de compte créatrice sont conservées tant
+              de 90 jours. Les données de compte créatrice sont conservées tant
               que le compte est actif, puis supprimées sur demande.
             </p>
           </section>
@@ -61,9 +60,8 @@ export default function PrivacyPage() {
             <p>
               Sous-traitants techniques utilisés : Anthropic (génération des
               réponses du bot), un hébergeur cloud pour le site et la base de
-              données, Stripe pour la gestion des abonnements, et Telegram
-              uniquement si la créatrice connecte cette option. Aucune donnée
-              n&apos;est vendue à des tiers.
+              données, et Telegram uniquement si la créatrice connecte cette
+              option. Aucune donnée n&apos;est vendue à des tiers.
             </p>
           </section>
 
@@ -71,7 +69,14 @@ export default function PrivacyPage() {
             <h2 className="text-foreground font-medium mb-2">5. Vos droits</h2>
             <p>
               Toute personne peut demander l&apos;accès, la rectification ou la
-              suppression de ses données en contactant l&apos;équipe Melii.
+              suppression de ses données en écrivant à{" "}
+              <a
+                href="mailto:jmsventurecapital@gmail.com"
+                className="underline underline-offset-4 hover:text-foreground transition"
+              >
+                jmsventurecapital@gmail.com
+              </a>
+              .
             </p>
           </section>
         </div>

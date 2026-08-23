@@ -27,6 +27,8 @@ ALTER TABLE creators ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS subscription_plan TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS accent_color TEXT;
 
 CREATE TABLE IF NOT EXISTS tiers (
   id           TEXT PRIMARY KEY,

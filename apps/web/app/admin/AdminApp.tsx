@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type AdminCreator = {
@@ -64,26 +64,50 @@ export default function AdminApp() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const loadCreators = useCallback(async () => {
+    const res = await fetch("/api/admin/creators");
+    if (res.status === 403 || res.status === 401) {
+      router.push("/dashboard");
+      return;
+    }
+    if (!res.ok) {
+      setError("Impossible de charger les données.");
+      setLoading(false);
+      return;
+    }
+    const json = await res.json();
+    setCreators(json.creators);
+    setSummary(json.summary);
+    setCommissionRate(json.commissionRate);
+    setLoading(false);
+  }, [router]);
 
   useEffect(() => {
-    (async () => {
-      const res = await fetch("/api/admin/creators");
-      if (res.status === 403 || res.status === 401) {
-        router.push("/dashboard");
-        return;
-      }
+    loadCreators();
+  }, [loadCreators]);
+
+  async function handleDelete(c: AdminCreator) {
+    const confirmed = window.confirm(
+      `Supprimer définitivement le compte de ${c.displayName || c.email} (${c.email}) ?\n\n` +
+        "Ses paliers, ventes déclarées et son historique de conversation seront supprimés avec. Cette action est irréversible."
+    );
+    if (!confirmed) return;
+
+    setDeletingId(c.id);
+    try {
+      const res = await fetch(`/api/admin/creators/${c.id}`, { method: "DELETE" });
       if (!res.ok) {
-        setError("Impossible de charger les données.");
-        setLoading(false);
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || "La suppression a échoué.");
         return;
       }
-      const json = await res.json();
-      setCreators(json.creators);
-      setSummary(json.summary);
-      setCommissionRate(json.commissionRate);
-      setLoading(false);
-    })();
-  }, [router]);
+      await loadCreators();
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -186,6 +210,7 @@ export default function AdminApp() {
                 <th className="px-4 py-3 font-medium">Conv. (30j)</th>
                 <th className="px-4 py-3 font-medium">Ventes déclarées</th>
                 <th className="px-4 py-3 font-medium">Commission due</th>
+                <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -216,11 +241,20 @@ export default function AdminApp() {
                   <td className="px-4 py-3 text-muted">{c.conversations30d}</td>
                   <td className="px-4 py-3">{eur(c.totalDeclaredCents)}</td>
                   <td className="px-4 py-3 font-medium">{eur(c.commissionOwedCents)}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => handleDelete(c)}
+                      disabled={deletingId === c.id}
+                      className="text-xs text-red-400 hover:text-red-300 transition disabled:opacity-50"
+                    >
+                      {deletingId === c.id ? "Suppression…" : "Supprimer"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-muted">
+                  <td colSpan={10} className="px-4 py-10 text-center text-muted">
                     Aucune créatrice ne correspond à ces filtres.
                   </td>
                 </tr>

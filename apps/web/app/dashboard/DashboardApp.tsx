@@ -12,6 +12,8 @@ type Creator = {
   telegramBotUsername: string | null;
   telegramWebhookReady: boolean;
   hasTelegramToken: boolean;
+  avatarUrl: string | null;
+  accentColor: string | null;
 };
 
 type Tier = {
@@ -221,6 +223,11 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [avatarUrl, setAvatarUrl] = useState(creator.avatarUrl || "");
+  const [accentColor, setAccentColor] = useState(creator.accentColor || "");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
   async function save() {
     setSaving(true);
     setError(null);
@@ -238,6 +245,26 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
       onSaved();
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveProfile() {
+    setSavingProfile(true);
+    setProfileError(null);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ avatarUrl, accentColor }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setProfileError(json.error || "Erreur lors de l'enregistrement.");
+        return;
+      }
+      onSaved();
+    } finally {
+      setSavingProfile(false);
     }
   }
 
@@ -295,6 +322,59 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
       >
         {saving ? "Enregistrement..." : "Enregistrer"}
       </button>
+
+      <div className="border-t border-border pt-8">
+        <h2 className="text-lg font-medium mb-1">Apparence</h2>
+        <p className="text-sm text-muted mb-6">
+          Optionnel — personnalise la page de chat que tes abonnés voient.
+        </p>
+
+        <div className="space-y-6">
+          <label className="block">
+            <span className="block text-sm text-muted mb-1.5">
+              URL de photo de profil (optionnel)
+            </span>
+            <input
+              className="input"
+              value={avatarUrl}
+              onChange={(e) => setAvatarUrl(e.target.value)}
+              placeholder="https://..."
+            />
+            <span className="block text-xs text-muted mt-1.5">
+              Lien direct vers une image déjà hébergée ailleurs (Instagram, Twitter, etc.) —
+              pas d&apos;upload de fichier ici.
+            </span>
+          </label>
+
+          <label className="block">
+            <span className="block text-sm text-muted mb-1.5">Couleur d&apos;accent (optionnel)</span>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={/^#([0-9a-fA-F]{6})$/.test(accentColor) ? accentColor : "#ff4d8d"}
+                onChange={(e) => setAccentColor(e.target.value)}
+                className="h-10 w-14 rounded-lg border border-border bg-transparent cursor-pointer"
+              />
+              <input
+                className="input flex-1"
+                value={accentColor}
+                onChange={(e) => setAccentColor(e.target.value)}
+                placeholder="#ff4d8d"
+              />
+            </div>
+          </label>
+
+          {profileError && <p className="text-sm text-red-400">{profileError}</p>}
+
+          <button
+            onClick={saveProfile}
+            disabled={savingProfile}
+            className="gradient-btn rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {savingProfile ? "Enregistrement..." : "Enregistrer l'apparence"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

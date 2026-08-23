@@ -93,7 +93,16 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-foreground font-medium mb-2">7. Contact</h2>
-            <p>Pour toute question relative à ces conditions, contactez l&apos;équipe Melii.</p>
+            <p>
+              Pour toute question relative à ces conditions, écrivez à{" "}
+              <a
+                href="mailto:jmsventurecapital@gmail.com"
+                className="underline underline-offset-4 hover:text-foreground transition"
+              >
+                jmsventurecapital@gmail.com
+              </a>
+              .
+            </p>
           </section>
         </div>
       </div>
