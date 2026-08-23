@@ -1,0 +1,40 @@
+# Déploiement en un clic sur Render : https://render.com → New → Blueprint
+# → pointez sur ce dépôt. Render lit ce fichier et crée tout automatiquement
+# (le service web ET la base de données Postgres).
+#
+# Un seul service web (voir apps/web/lib/telegram.ts pour pourquoi le bot
+# Telegram est fusionné dedans plutôt que déployé à part) + une base
+# PostgreSQL managée par Render. Plus besoin de disque persistant : toutes
+# les données (créatrices, tarifs, ventes, messages) vivent dans Postgres.
+
+databases:
+  - name: melii-db
+    plan: free # suffisant pour démarrer ; upgradable plus tard sans downtime
+    databaseName: melii
+    user: melii
+
+services:
+  - type: web
+    name: melii
+    runtime: node
+    plan: free # aucun disque requis désormais, "free" suffit pour démarrer
+    buildCommand: npm install && npm run build --workspace=apps/web
+    startCommand: npm run start --workspace=apps/web
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: melii-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false # collé manuellement dans le dashboard Render au 1er déploiement
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-5
+      - key: MELII_COMMISSION_RATE
+        value: "0.15"
+      - key: CONVERSATION_RETENTION_DAYS
+        value: "90"
