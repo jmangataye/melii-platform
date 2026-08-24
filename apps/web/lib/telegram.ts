@@ -1,7 +1,7 @@
 import type { Creator } from "@melii/db";
 import { generateBotReply } from "./chat-engine";
 
-async function sendTelegramMessage(botToken: string, chatId: number | string, text: string) {
+export async function sendTelegramMessage(botToken: string, chatId: number | string, text: string) {
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
   const res = await fetch(url, {
     method: "POST",

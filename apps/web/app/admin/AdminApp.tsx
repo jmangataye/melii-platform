@@ -16,6 +16,18 @@ type AdminCreator = {
   totalDeclaredCents: number;
   conversations30d: number;
   commissionOwedCents: number;
+  referralCount: number;
+  commissionRate: number;
+};
+
+type FlaggedConversation = {
+  id: string;
+  creatorId: string;
+  chatId: string;
+  content: string;
+  createdAt: string;
+  creatorDisplayName: string;
+  creatorEmail: string;
 };
 
 type Summary = {
@@ -56,6 +68,7 @@ type SortKey = "createdAt" | "conversations30d" | "totalDeclaredCents" | "commis
 
 export default function AdminApp() {
   const router = useRouter();
+  const [view, setView] = useState<"creators" | "moderation">("creators");
   const [creators, setCreators] = useState<AdminCreator[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [commissionRate, setCommissionRate] = useState(0.15);
@@ -164,6 +177,33 @@ export default function AdminApp() {
           </div>
         )}
 
+        <nav className="flex gap-1 border-b border-border">
+          <button
+            onClick={() => setView("creators")}
+            className={`px-4 py-2.5 text-sm rounded-t-lg transition ${
+              view === "creators"
+                ? "text-foreground border-b-2 border-accent -mb-px font-medium"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            Créatrices
+          </button>
+          <button
+            onClick={() => setView("moderation")}
+            className={`px-4 py-2.5 text-sm rounded-t-lg transition ${
+              view === "moderation"
+                ? "text-foreground border-b-2 border-accent -mb-px font-medium"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            Modération
+          </button>
+        </nav>
+
+        {view === "moderation" && <ModerationPanel />}
+
+        {view === "creators" && (
+        <>
         <div className="flex flex-wrap items-center gap-3">
           <input
             className="input max-w-xs"
@@ -204,11 +244,12 @@ export default function AdminApp() {
                 <th className="px-4 py-3 font-medium">Créatrice</th>
                 <th className="px-4 py-3 font-medium">Inscrite le</th>
                 <th className="px-4 py-3 font-medium">Abonnement</th>
-                <th className="px-4 py-3 font-medium">Fin d'essai</th>
+                <th className="px-4 py-3 font-medium">Fin d&apos;essai</th>
                 <th className="px-4 py-3 font-medium">Telegram</th>
                 <th className="px-4 py-3 font-medium">Liens</th>
                 <th className="px-4 py-3 font-medium">Conv. (30j)</th>
                 <th className="px-4 py-3 font-medium">Ventes déclarées</th>
+                <th className="px-4 py-3 font-medium">Parrainage</th>
                 <th className="px-4 py-3 font-medium">Commission due</th>
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
@@ -240,6 +281,9 @@ export default function AdminApp() {
                   <td className="px-4 py-3 text-muted">{c.tierCount}</td>
                   <td className="px-4 py-3 text-muted">{c.conversations30d}</td>
                   <td className="px-4 py-3">{eur(c.totalDeclaredCents)}</td>
+                  <td className="px-4 py-3 text-muted">
+                    {c.referralCount > 0 ? `${c.referralCount} (${(c.commissionRate * 100).toFixed(0)}%)` : "—"}
+                  </td>
                   <td className="px-4 py-3 font-medium">{eur(c.commissionOwedCents)}</td>
                   <td className="px-4 py-3">
                     <button
@@ -254,7 +298,7 @@ export default function AdminApp() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-muted">
+                  <td colSpan={11} className="px-4 py-10 text-center text-muted">
                     Aucune créatrice ne correspond à ces filtres.
                   </td>
                 </tr>
@@ -266,8 +310,10 @@ export default function AdminApp() {
         <p className="text-xs text-muted">
           Taux de commission actuel : {(commissionRate * 100).toFixed(0)}% des ventes déclarées par les créatrices.
           Ces montants sont indicatifs (basés sur les déclarations manuelles) tant que la facturation Stripe
-          automatique n'est pas branchée.
+          automatique n&apos;est pas branchée.
         </p>
+        </>
+        )}
       </main>
     </div>
   );
@@ -278,6 +324,77 @@ function SummaryCard({ label, value, accent }: { label: string; value: string; a
     <div className="card p-4">
       <div className="text-xs text-muted mb-1">{label}</div>
       <div className={`text-xl font-semibold ${accent ? "gradient-text" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+// Onglet modération : uniquement les messages qui ont déclenché un mot-clé
+// de sécurité (voir listFlaggedConversations côté DB) — pas l'historique
+// complet de conversation de chaque créatrice. On affiche juste le message
+// concerné avec son contexte minimal (qui, quand), pas le fil entier.
+function ModerationPanel() {
+  const [flagged, setFlagged] = useState<FlaggedConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/admin/moderation");
+    if (res.ok) {
+      const json = await res.json();
+      setFlagged(json.flagged || []);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function markReviewed(id: string) {
+    setReviewingId(id);
+    try {
+      await fetch(`/api/admin/moderation/${id}`, { method: "PATCH" });
+      setFlagged((prev) => prev.filter((f) => f.id !== id));
+    } finally {
+      setReviewingId(null);
+    }
+  }
+
+  if (loading) {
+    return <p className="text-sm text-muted">Chargement…</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted">
+        Messages ayant déclenché un mot-clé de sécurité (détresse, minorité, chantage...),
+        pas encore vérifiés. Le bot a déjà répondu par un message de sécurité standard —
+        ceci est juste pour votre information, pas une conversation à reprendre.
+      </p>
+      {flagged.length === 0 ? (
+        <p className="text-sm text-muted card p-5">Rien à signaler en ce moment.</p>
+      ) : (
+        <ul className="space-y-3">
+          {flagged.map((f) => (
+            <li key={f.id} className="card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted">
+                <span>
+                  {f.creatorDisplayName} ({f.creatorEmail})
+                </span>
+                <span>{new Date(f.createdAt).toLocaleString("fr-FR")}</span>
+              </div>
+              <p className="text-sm bg-surface-2 rounded-lg p-3">{f.content}</p>
+              <button
+                onClick={() => markReviewed(f.id)}
+                disabled={reviewingId === f.id}
+                className="text-xs text-muted hover:text-foreground transition disabled:opacity-50"
+              >
+                {reviewingId === f.id ? "..." : "Marquer comme vérifié"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -37,13 +37,38 @@ export async function PUT(req: NextRequest) {
     accentColor = accentColorRaw;
   }
 
-  const creator = await updateCreatorProfile(creatorId, { avatarUrl, accentColor });
+  // galleryUrls est optionnel dans le body : absent = on ne touche pas à la
+  // galerie existante (voir le commentaire sur updateCreatorProfile côté DB),
+  // tableau vide = on la vide vraiment.
+  let galleryUrls: string[] | undefined = undefined;
+  if (Array.isArray(body?.galleryUrls)) {
+    const cleaned: string[] = [];
+    for (const raw of body.galleryUrls) {
+      if (typeof raw !== "string" || !raw.trim()) continue;
+      try {
+        const parsed = new URL(raw.trim());
+        if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("bad protocol");
+        cleaned.push(parsed.toString());
+      } catch {
+        return NextResponse.json({ error: "Une des URLs de la galerie est invalide." }, { status: 400 });
+      }
+    }
+    if (cleaned.length > 8) {
+      return NextResponse.json({ error: "8 photos maximum dans la galerie." }, { status: 400 });
+    }
+    galleryUrls = cleaned;
+  }
+
+  const creator = await updateCreatorProfile(creatorId, { avatarUrl, accentColor, galleryUrls });
+  if (!creator) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
   return NextResponse.json({
     ok: true,
     creator: {
       id: creator.id,
       avatarUrl: creator.avatarUrl,
       accentColor: creator.accentColor,
+      galleryUrls: creator.galleryUrls,
     },
   });
 }

@@ -13,6 +13,10 @@ export async function POST(req: NextRequest) {
   const password = typeof body?.password === "string" ? body.password : "";
   const displayName = typeof body?.displayName === "string" ? body.displayName.trim() : "";
   const ageConfirmed = body?.ageConfirmed === true;
+  // Code de parrainage optionnel (voir ?ref= capturé par app/signup/page.tsx) —
+  // un code invalide ou inconnu est simplement ignoré (createCreator ne
+  // trouve pas de créatrice correspondante) plutôt que de bloquer l'inscription.
+  const referralCode = typeof body?.referralCode === "string" ? body.referralCode.trim() : undefined;
 
   if (!email || !email.includes("@")) {
     return NextResponse.json({ error: "Email invalide." }, { status: 400 });
@@ -37,7 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Un compte existe déjà avec cet email." }, { status: 409 });
   }
 
-  const creator = await createCreator({ email, password, displayName, ageConfirmed });
+  const creator = await createCreator({ email, password, displayName, ageConfirmed, referralCode });
   await setSessionCookie(creator.id);
 
   return NextResponse.json({ id: creator.id, email: creator.email });

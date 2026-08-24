@@ -7,6 +7,10 @@
 // Usage : node apps/web/scripts/purge-conversations.js [jours]
 // (lancé depuis la racine du repo, DATABASE_URL doit être dans l'environnement)
 
+// require() volontaire : ce fichier est un entrypoint CommonJS lancé
+// directement via `node` par le cron Render (pas transpilé/bundlé par
+// Next.js), donc `import` ESM ne convient pas ici.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { purgeOldConversations } = require("@melii/db");
 
 const days = Number(process.argv[2] || process.env.CONVERSATION_RETENTION_DAYS || 90);

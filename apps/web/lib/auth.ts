@@ -26,16 +26,18 @@ function sign(payload: string): string {
   return base64url(crypto.createHmac("sha256", secret()).update(payload).digest());
 }
 
-/** Crée un jeton de session signé pour une créatrice donnée. */
-export function createSessionToken(creatorId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const payload = base64url(Buffer.from(JSON.stringify({ sub: creatorId, exp })));
-  const sig = sign(payload);
-  return `${payload}.${sig}`;
+type TokenPayload = { sub: string; exp: number; purpose?: string };
+
+function encodeToken(payload: TokenPayload): string {
+  const encoded = base64url(Buffer.from(JSON.stringify(payload)));
+  return `${encoded}.${sign(encoded)}`;
 }
 
-/** Vérifie un jeton de session et retourne le creatorId si valide. */
-export function verifySessionToken(token: string | undefined | null): string | null {
+/** Décode et vérifie la signature + l'expiration d'un jeton — ne vérifie PAS
+ * `purpose`, c'est aux appelants (verifySessionToken / verifyPending2faToken)
+ * de s'assurer qu'un jeton d'un type n'est jamais accepté comme un autre
+ * (ex. un jeton "2FA en attente" ne doit jamais valoir comme session réelle). */
+function decodeToken(token: string | undefined | null): TokenPayload | null {
   if (!token) return null;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return null;
@@ -49,10 +51,44 @@ export function verifySessionToken(token: string | undefined | null): string | n
     if (typeof decoded.exp !== "number" || decoded.exp < Math.floor(Date.now() / 1000)) {
       return null;
     }
-    return decoded.sub as string;
+    if (typeof decoded.sub !== "string") return null;
+    return decoded as TokenPayload;
   } catch {
     return null;
   }
+}
+
+/** Crée un jeton de session signé pour une créatrice donnée. */
+export function createSessionToken(creatorId: string): string {
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  return encodeToken({ sub: creatorId, exp });
+}
+
+/** Vérifie un jeton de session et retourne le creatorId si valide. Refuse
+ * explicitement un jeton "2FA en attente" (purpose="2fa") : sans ce check,
+ * un jeton émis pendant l'étape intermédiaire de connexion (avant saisie du
+ * code) pourrait être rejoué comme une vraie session, ce qui court-circuiterait
+ * le 2FA. */
+export function verifySessionToken(token: string | undefined | null): string | null {
+  const decoded = decodeToken(token);
+  if (!decoded || decoded.purpose) return null;
+  return decoded.sub;
+}
+
+// Jeton intermédiaire très courte durée émis juste après un mot de passe
+// correct quand le 2FA est activé — n'autorise RIEN d'autre que de finir la
+// connexion via /api/auth/verify-2fa, jamais accepté par verifySessionToken.
+const PENDING_2FA_TTL_SECONDS = 5 * 60;
+
+export function createPending2faToken(creatorId: string): string {
+  const exp = Math.floor(Date.now() / 1000) + PENDING_2FA_TTL_SECONDS;
+  return encodeToken({ sub: creatorId, exp, purpose: "2fa" });
+}
+
+export function verifyPending2faToken(token: string | undefined | null): string | null {
+  const decoded = decodeToken(token);
+  if (!decoded || decoded.purpose !== "2fa") return null;
+  return decoded.sub;
 }
 
 export async function setSessionCookie(creatorId: string) {

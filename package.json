@@ -14,5 +14,8 @@
     "bot:build": "npm run build --workspace=apps/bot-runner",
     "purge:conversations": "node apps/web/scripts/purge-conversations.js",
     "test": "node --test packages/db/test/**/*.test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }

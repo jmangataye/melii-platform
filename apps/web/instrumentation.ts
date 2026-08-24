@@ -18,29 +18,52 @@
 const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000; // une fois par jour
 const FIRST_RUN_DELAY_MS = 60 * 1000; // laisse le serveur finir de démarrer
 
+// Relances Telegram : toutes les heures, décalé de quelques minutes par
+// rapport à la purge pour ne pas cumuler les deux au démarrage. Même
+// limite de plan gratuit Render que la purge (voir commentaire ci-dessus) :
+// le job ne tourne que quand le service est réveillé.
+const RELANCE_INTERVAL_MS = 60 * 60 * 1000; // une fois par heure
+const RELANCE_FIRST_RUN_DELAY_MS = 3 * 60 * 1000;
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   const retentionDays = Number(process.env.CONVERSATION_RETENTION_DAYS || 90);
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+  if (Number.isFinite(retentionDays) && retentionDays > 0) {
+    const { purgeOldConversations } = await import("@melii/db");
 
-  const { purgeOldConversations } = await import("@melii/db");
+    async function runPurge() {
+      try {
+        const deleted = await purgeOldConversations(retentionDays);
+        if (deleted > 0) {
+          console.log(
+            `[purge-conversations] ${deleted} message(s) de plus de ${retentionDays} jours supprimé(s).`
+          );
+        }
+      } catch (err) {
+        console.error("[purge-conversations] échec :", err);
+      }
+    }
 
-  async function runPurge() {
+    setTimeout(runPurge, FIRST_RUN_DELAY_MS).unref?.();
+    setInterval(runPurge, PURGE_INTERVAL_MS).unref?.();
+  }
+
+  const { runRelanceJob } = await import("./lib/relance");
+
+  async function runRelance() {
     try {
-      const deleted = await purgeOldConversations(retentionDays);
-      if (deleted > 0) {
-        console.log(
-          `[purge-conversations] ${deleted} message(s) de plus de ${retentionDays} jours supprimé(s).`
-        );
+      const sent = await runRelanceJob();
+      if (sent > 0) {
+        console.log(`[relance] ${sent} message(s) de relance envoyé(s).`);
       }
     } catch (err) {
-      console.error("[purge-conversations] échec :", err);
+      console.error("[relance] échec :", err);
     }
   }
 
-  setTimeout(runPurge, FIRST_RUN_DELAY_MS).unref?.();
-  setInterval(runPurge, PURGE_INTERVAL_MS).unref?.();
+  setTimeout(runRelance, RELANCE_FIRST_RUN_DELAY_MS).unref?.();
+  setInterval(runRelance, RELANCE_INTERVAL_MS).unref?.();
 }
 
 // Sans outil externe (Sentry ou équivalent) branché, une erreur serveur en

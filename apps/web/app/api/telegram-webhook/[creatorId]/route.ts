@@ -18,8 +18,13 @@ export async function POST(
     return NextResponse.json({ error: "unknown creator" }, { status: 404 });
   }
 
+  // Fail-closed : si le secret n'est pas en base (ne devrait jamais arriver
+  // tant qu'un bot est connecté — token et secret sont toujours écrits
+  // ensemble, voir updateCreatorTelegram), on refuse plutôt que de traiter
+  // l'update sans vérification. Un secret manquant ne doit jamais se
+  // traduire par "tout accepter".
   const secretHeader = req.headers.get("x-telegram-bot-api-secret-token");
-  if (creator.telegramWebhookSecret && secretHeader !== creator.telegramWebhookSecret) {
+  if (!creator.telegramWebhookSecret || secretHeader !== creator.telegramWebhookSecret) {
     return NextResponse.json({ error: "invalid secret" }, { status: 401 });
   }
 

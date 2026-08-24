@@ -1,4 +1,5 @@
 import Link from "next/link";
+import LandingChatPreview from "./LandingChatPreview";
 
 const STEPS = [
   {
@@ -33,35 +34,46 @@ export default function LandingPage() {
       <Nav />
 
       {/* Hero */}
-      <section className="mx-auto max-w-5xl px-6 pt-24 pb-20 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-1.5 text-sm text-muted mb-8">
-          <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]" />
-          Bot actif — répond en quelques secondes
-        </div>
-        <h1 className="text-5xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
-          Votre communauté mérite
-          <br />
-          <span className="gradient-text">un bot à votre image</span>
-        </h1>
-        <p className="mt-6 text-lg text-muted max-w-2xl mx-auto">
-          Melii donne à chaque créatrice un chatbot IA sur son propre lien de chat
-          (Telegram en option), entraîné sur sa personnalité, qui fait découvrir
-          son contenu exclusif palier par palier — pendant qu'elle se concentre
-          sur le reste.
-        </p>
-        <div className="mt-10 flex items-center justify-center gap-4">
-          <Link
-            href="/signup"
-            className="gradient-btn rounded-full px-7 py-3 font-medium text-white shadow-lg shadow-accent/20 hover:opacity-90 transition"
-          >
-            Créer mon bot
-          </Link>
-          <Link
-            href="/login"
-            className="rounded-full px-7 py-3 font-medium border border-border hover:bg-surface transition"
-          >
-            J'ai déjà un compte
-          </Link>
+      <section className="mx-auto max-w-6xl px-6 pt-20 pb-20">
+        <div className="grid lg:grid-cols-2 gap-14 items-center">
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-1.5 text-sm text-muted mb-8">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]" />
+              Bot actif — répond en quelques secondes
+            </div>
+            <h1 className="text-5xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
+              Votre communauté mérite
+              <br />
+              <span className="gradient-text">un bot à votre image</span>
+            </h1>
+            <p className="mt-6 text-lg text-muted max-w-2xl mx-auto lg:mx-0">
+              Melii donne à chaque créatrice un chatbot IA sur son propre lien de chat
+              (Telegram en option), entraîné sur sa personnalité, qui fait découvrir
+              son contenu exclusif palier par palier — pendant qu&apos;elle se concentre
+              sur le reste.
+            </p>
+            <div className="mt-10 flex items-center justify-center lg:justify-start gap-4">
+              <Link
+                href="/signup"
+                className="gradient-btn rounded-full px-7 py-3 font-medium text-white shadow-lg shadow-accent/20"
+              >
+                Créer mon bot
+              </Link>
+              <Link
+                href="/login"
+                className="rounded-full px-7 py-3 font-medium border border-border hover:bg-surface transition"
+              >
+                J&apos;ai déjà un compte
+              </Link>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs uppercase tracking-wide text-muted mb-3 text-center lg:text-left">
+              Essayez, ça répond vraiment
+            </p>
+            <LandingChatPreview />
+          </div>
         </div>
       </section>
 
@@ -71,7 +83,7 @@ export default function LandingPage() {
         <p className="text-muted text-center mb-12">Trois étapes, aucune compétence technique requise.</p>
         <div className="grid sm:grid-cols-3 gap-6">
           {STEPS.map((s) => (
-            <div key={s.title} className="card p-6">
+            <div key={s.title} className="card card-hover p-6">
               <h3 className="font-medium mb-2">{s.title}</h3>
               <p className="text-sm text-muted leading-relaxed">{s.text}</p>
             </div>
@@ -87,7 +99,7 @@ export default function LandingPage() {
             <p className="text-muted mb-6 leading-relaxed">
               Le bot propose toujours le lien le moins cher en premier, puis avance
               naturellement vers vos offres suivantes au fil de la conversation —
-              jamais tout d'un coup, jamais en spammant.
+              jamais tout d&apos;un coup, jamais en spammant.
             </p>
             <ul className="space-y-3">
               {EXAMPLE_TIERS.map((t, i) => (
@@ -105,13 +117,13 @@ export default function LandingPage() {
             <p className="text-xs uppercase tracking-wide text-muted mb-3">Aperçu conversation</p>
             <div className="space-y-3 text-sm">
               <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface px-4 py-2">
-                Hey toi 😊 contente que tu sois là, tu viens d'où ?
+                Hey toi 😊 contente que tu sois là, tu viens d&apos;où ?
               </div>
               <div className="max-w-[85%] ml-auto rounded-2xl rounded-br-sm gradient-btn px-4 py-2 text-white">
-                Salut ! Je te découvre à l'instant
+                Salut ! Je te découvre à l&apos;instant
               </div>
               <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface px-4 py-2">
-                J'ai posté un truc que tu vas adorer aujourd'hui... je te montre ? 👀
+                J&apos;ai posté un truc que tu vas adorer aujourd&apos;hui... je te montre ? 👀
               </div>
             </div>
           </div>
@@ -122,11 +134,11 @@ export default function LandingPage() {
       <section className="mx-auto max-w-5xl px-6 py-16">
         <h2 className="text-2xl font-semibold text-center mb-2">Choisissez un script de départ</h2>
         <p className="text-muted text-center mb-12">
-          Trois personnalités prêtes à l'emploi, personnalisables en quelques clics.
+          Trois personnalités prêtes à l&apos;emploi, personnalisables en quelques clics.
         </p>
         <div className="grid sm:grid-cols-3 gap-6">
           {TONES.map((t) => (
-            <div key={t.name} className="card p-6">
+            <div key={t.name} className="card card-hover p-6">
               <h3 className="font-medium mb-2">{t.name}</h3>
               <p className="text-sm text-muted leading-relaxed">{t.desc}</p>
             </div>
@@ -139,9 +151,9 @@ export default function LandingPage() {
         <h2 className="text-2xl font-semibold mb-4">Un cadre pensé pour durer</h2>
         <p className="text-muted leading-relaxed">
           Chaque bot Melii intègre des règles non modifiables : honnêteté si on lui
-          demande sincèrement s'il s'agit d'une IA, aucun contenu explicite généré
+          demande sincèrement s&apos;il s&apos;agit d&apos;une IA, aucun contenu explicite généré
           dans le chat, et une coupure automatique du ton commercial en cas de
-          détresse réelle ou de signal d'âge mineur. C'est ce qui protège votre
+          détresse réelle ou de signal d&apos;âge mineur. C&apos;est ce qui protège votre
           communauté — et votre compte.
         </p>
       </section>

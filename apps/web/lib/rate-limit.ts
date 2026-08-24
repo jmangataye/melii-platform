@@ -34,9 +34,22 @@ export function checkRateLimit(key: string, { limit, windowMs }: { limit: number
   return true;
 }
 
-/** Extrait une IP client raisonnable derrière le proxy Render. */
+/**
+ * Extrait une IP client raisonnable derrière le proxy Render.
+ *
+ * Important : on prend le DERNIER maillon de X-Forwarded-For, pas le
+ * premier. Le premier maillon est la valeur que le client a lui-même
+ * envoyée (ou inventée) — un attaquant peut y mettre n'importe quoi pour
+ * obtenir un nouveau compteur de rate-limit à chaque requête et contourner
+ * la limite entièrement. Le dernier maillon est celui ajouté par le proxy
+ * Render lui-même juste avant de nous transmettre la requête : c'est la
+ * seule valeur de la chaîne que le client ne contrôle pas.
+ */
 export function clientIp(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  if (forwarded) {
+    const hops = forwarded.split(",").map((h) => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
   return "unknown";
 }

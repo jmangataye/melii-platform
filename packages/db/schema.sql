@@ -28,6 +28,17 @@ ALTER TABLE creators ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS accent_color TEXT;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS slug TEXT UNIQUE;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS gallery_urls TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS referral_code TEXT UNIQUE;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS referred_by_creator_id TEXT REFERENCES creators(id) ON DELETE SET NULL;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS totp_backup_codes TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain TEXT UNIQUE;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain_verify_token TEXT;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain_verified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS relance_enabled BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS tiers (
   id           TEXT PRIMARY KEY,
@@ -68,8 +79,19 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Un message qui contient un mot-clé de sécurité (détresse, minorité,
+-- chantage...) est marqué flagged=true à l'écriture (voir persona.js /
+-- containsSafetyKeyword) pour alimenter le tableau de modération admin sans
+-- avoir à relire tout l'historique de toutes les créatrices à chaque fois.
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS flagged BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS flag_reviewed BOOLEAN NOT NULL DEFAULT false;
+
 CREATE INDEX IF NOT EXISTS idx_conv_lookup
   ON conversation_messages (creator_id, chat_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_conv_flagged
+  ON conversation_messages (created_at DESC)
+  WHERE flagged = true AND flag_reviewed = false;
 
 CREATE INDEX IF NOT EXISTS idx_clicks_creator
   ON click_events (creator_id, created_at);
@@ -85,3 +107,16 @@ CREATE TABLE IF NOT EXISTS password_resets (
 
 CREATE INDEX IF NOT EXISTS idx_password_resets_creator
   ON password_resets (creator_id);
+
+-- Relances automatiques (Telegram uniquement, opt-in) : une ligne = un envoi
+-- déjà fait pour cette conversation. La contrainte UNIQUE empêche par
+-- construction d'envoyer une deuxième relance à la même conversation, même
+-- en cas de double exécution du job planifié.
+CREATE TABLE IF NOT EXISTS conversation_relances (
+  id         TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  chat_id    TEXT NOT NULL,
+  tier_id    TEXT REFERENCES tiers(id) ON DELETE SET NULL,
+  sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (creator_id, chat_id)
+);

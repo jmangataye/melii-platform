@@ -38,11 +38,23 @@ export async function generateBotReply(
   chatId: string,
   userText: string
 ): Promise<string> {
-  if (containsSafetyKeyword(userText)) {
+  // Le message est marqué "flagged" plutôt que d'être écarté en silence :
+  // ça alimente le tableau de modération admin (voir /admin, onglet
+  // Modération) pour que Bryan puisse vérifier un vrai signal de détresse —
+  // avant ce commentaire, ce message n'était JAMAIS enregistré du tout, ce
+  // qui ne laissait aucune trace consultable en cas de besoin réel.
+  const flagged = containsSafetyKeyword(userText);
+  await appendMessage({ creatorId: creator.id, chatId, role: "user", content: userText, flagged });
+
+  if (flagged) {
+    await appendMessage({
+      creatorId: creator.id,
+      chatId,
+      role: "assistant",
+      content: SAFE_FALLBACK_REPLY,
+    });
     return SAFE_FALLBACK_REPLY;
   }
-
-  await appendMessage({ creatorId: creator.id, chatId, role: "user", content: userText });
 
   const rawTiers = await listTiers(creator.id);
   const tiers = rawTiers.map((t) => ({

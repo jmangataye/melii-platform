@@ -237,6 +237,48 @@ test("logClick incrémente bien les clics comptés dans les stats", async () => 
   assert.equal(stats.clicksByTier[tier.id], 2);
 });
 
+test("getClicksByDay renvoie exactement N jours, aujourd'hui inclus, avec des zéros explicites pour les jours sans clic (régression : pas de \"trous\" pour le graphique)", async () => {
+  const creator = await makeCreator("clicks-by-day");
+  const tier = await db.upsertTier(creator.id, { order: 1, label: "Photos", priceCents: 500, currency: "EUR", url: "https://x/1" });
+  await db.logClick({ creatorId: creator.id, tierId: tier.id });
+  await db.logClick({ creatorId: creator.id, tierId: tier.id });
+
+  const series = await db.getClicksByDay(creator.id, 7);
+  assert.equal(series.length, 7, "toujours exactement `days` entrées, même sans activité la plupart des jours");
+
+  const today = new Date().toISOString().slice(0, 10);
+  assert.equal(series[series.length - 1].day, today, "le dernier jour de la série doit être aujourd'hui");
+
+  const todayEntry = series.find((d) => d.day === today);
+  assert.equal(todayEntry.clicks, 2, "les 2 clics faits à l'instant doivent apparaître sur le jour du jour");
+
+  const otherDays = series.filter((d) => d.day !== today);
+  assert.ok(
+    otherDays.every((d) => d.clicks === 0),
+    "les jours sans clic doivent être à 0, pas absents de la série"
+  );
+
+  // Chaque jour de la série doit être immédiatement le lendemain du précédent
+  // (pas de jours dupliqués ni de saut de date dans generate_series).
+  for (let i = 1; i < series.length; i++) {
+    const prev = new Date(series[i - 1].day + "T00:00:00Z");
+    const cur = new Date(series[i].day + "T00:00:00Z");
+    assert.equal((cur - prev) / (24 * 60 * 60 * 1000), 1, `jour ${i} doit suivre directement le jour ${i - 1}`);
+  }
+});
+
+test("getStats inclut clicksByDay pour la créatrice, cohérent avec getClicksByDay", async () => {
+  const creator = await makeCreator("clicks-by-day-in-stats");
+  const tier = await db.upsertTier(creator.id, { order: 1, label: "Photos", priceCents: 500, currency: "EUR", url: "https://x/1" });
+  await db.logClick({ creatorId: creator.id, tierId: tier.id });
+
+  const stats = await db.getStats(creator.id);
+  assert.ok(Array.isArray(stats.clicksByDay));
+  assert.equal(stats.clicksByDay.length, 14, "getStats() appelle getClicksByDay avec la fenêtre par défaut de 14 jours");
+  const totalFromSeries = stats.clicksByDay.reduce((sum, d) => sum + d.clicks, 0);
+  assert.equal(totalFromSeries, 1);
+});
+
 // --- Conversations ---------------------------------------------------
 
 test("appendMessage / getRecentMessages : ordre chronologique et limite respectée", async () => {

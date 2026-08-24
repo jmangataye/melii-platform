@@ -91,7 +91,10 @@ export default function ChatWidget({
     <div className="flex-1 flex flex-col card p-0 overflow-hidden">
       <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[50vh]">
         {loadingHistory && (
-          <p className="text-sm text-muted text-center py-8">Chargement...</p>
+          <div className="space-y-3">
+            <div className="max-w-[70%] h-9 rounded-2xl rounded-bl-sm bg-surface-2 animate-pulse" />
+            <div className="max-w-[50%] h-9 rounded-2xl rounded-bl-sm bg-surface-2 animate-pulse ml-0" />
+          </div>
         )}
         {!loadingHistory && messages.length === 0 && (
           <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-2 text-sm">
@@ -113,8 +116,10 @@ export default function ChatWidget({
           </div>
         ))}
         {sending && (
-          <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-2 text-sm text-muted">
-            ...
+          <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-3 flex items-center gap-1.5" aria-label={`${displayName} est en train d'écrire`}>
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
           </div>
         )}
         <div ref={bottomRef} />
