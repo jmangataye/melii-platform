@@ -1445,23 +1445,58 @@ const POTENTIAL_STYLES: Record<string, string> = {
   faible: "bg-surface-2 text-muted border border-border",
 };
 
-function FansTab() {
-  const [fans, setFans] = useState<FanSummary[] | null>(null);
+const POTENTIAL_FILTERS = [
+  { value: "all", label: "Tous" },
+  { value: "élevé", label: "Élevé" },
+  { value: "moyen", label: "Moyen" },
+  { value: "faible", label: "Faible" },
+] as const;
 
-  useEffect(() => {
-    let cancelled = false;
+function FansTab() {
+  const toast = useToast();
+  const { confirm, modal } = useConfirm();
+  const [fans, setFans] = useState<FanSummary[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [potentialFilter, setPotentialFilter] = useState<(typeof POTENTIAL_FILTERS)[number]["value"]>("all");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  function load() {
     fetch("/api/fans")
       .then((r) => r.json())
-      .then((json) => {
-        if (!cancelled) setFans(json.fans || []);
-      })
-      .catch(() => {
-        if (!cancelled) setFans([]);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((json) => setFans(json.fans || []))
+      .catch(() => setFans([]));
+  }
+
+  useEffect(() => {
+    load();
   }, []);
+
+  async function removeFan(f: FanSummary) {
+    const ok = await confirm(
+      "Supprimer cette conversation ?",
+      "Les messages et les notes du bot sur ce fan seront définitivement effacés. Cette action est irréversible."
+    );
+    if (!ok) return;
+    setDeletingId(f.chatId);
+    try {
+      await fetch(`/api/fans/${encodeURIComponent(f.chatId)}`, { method: "DELETE" });
+      toast("Conversation supprimée");
+      load();
+    } catch {
+      toast("Erreur lors de la suppression.", "error");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  const visible = (fans || []).filter((f) => {
+    if (potentialFilter !== "all" && f.potential !== potentialFilter) return false;
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      if (!f.notes.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -1475,6 +1510,32 @@ function FansTab() {
           avant de la voir apparaître ici.
         </p>
       </div>
+
+      {fans !== null && fans.length > 0 && (
+        <div className="space-y-3">
+          <input
+            className="input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Chercher dans les notes (ex : moto, hésite, insiste)..."
+          />
+          <div className="flex items-center gap-1 flex-wrap">
+            {POTENTIAL_FILTERS.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => setPotentialFilter(p.value)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
+                  potentialFilter === p.value
+                    ? "bg-surface-2 border-muted text-foreground"
+                    : "border-border text-muted hover:text-foreground"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {fans === null && (
         <div className="space-y-3">
@@ -1491,9 +1552,13 @@ function FansTab() {
         />
       )}
 
-      {fans !== null && fans.length > 0 && (
+      {fans !== null && fans.length > 0 && visible.length === 0 && (
+        <EmptyState icon="🔍" title="Aucun résultat" hint="Essayez un autre terme ou un autre filtre de potentiel." />
+      )}
+
+      {visible.length > 0 && (
         <div className="space-y-3">
-          {fans.map((f) => (
+          {visible.map((f) => (
             <div key={f.chatId} className="card p-4 space-y-2">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1502,15 +1567,24 @@ function FansTab() {
                   </span>
                   <span className="text-xs text-muted">· actif {timeAgo(f.lastActiveAt)}</span>
                 </div>
-                {f.potential && (
-                  <span
-                    className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${
-                      POTENTIAL_STYLES[f.potential] || POTENTIAL_STYLES.faible
-                    }`}
+                <div className="flex items-center gap-2 shrink-0">
+                  {f.potential && (
+                    <span
+                      className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                        POTENTIAL_STYLES[f.potential] || POTENTIAL_STYLES.faible
+                      }`}
+                    >
+                      Potentiel {f.potential}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => removeFan(f)}
+                    disabled={deletingId === f.chatId}
+                    className="text-xs text-muted hover:text-red-400 transition disabled:opacity-50"
                   >
-                    Potentiel {f.potential}
-                  </span>
-                )}
+                    {deletingId === f.chatId ? "..." : "Supprimer"}
+                  </button>
+                </div>
               </div>
               {f.notes ? (
                 <p className="text-sm text-muted">{f.notes}</p>
@@ -1523,6 +1597,7 @@ function FansTab() {
           ))}
         </div>
       )}
+      {modal}
     </div>
   );
 }

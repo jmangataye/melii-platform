@@ -79,11 +79,72 @@ test("buildSystemPrompt trie les paliers par ordre croissant même si donnés da
   assert.ok(idxPhotos > -1 && idxVip > -1 && idxPhotos < idxVip, "le palier 1 doit apparaître avant le palier 2");
 });
 
+test("buildSystemPrompt inclut l'argument de vente d'un palier seulement s'il est fourni", () => {
+  const tiers = [
+    { order: 1, label: "Photos", priceCents: 500, currency: "EUR", shortUrl: "https://x/l/1", sellAngle: "Insiste sur l'exclusivité" },
+    { order: 2, label: "VIP", priceCents: 2000, currency: "EUR", shortUrl: "https://x/l/2" },
+  ];
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers });
+  assert.match(prompt, /Comment le présenter : Insiste sur l'exclusivité/);
+  // Le palier VIP n'a pas de sellAngle : sa ligne ne doit pas avoir de sous-ligne "Comment le présenter".
+  const vipLine = prompt.split("\n").find((l) => l.includes('"VIP"'));
+  const vipLineIndex = prompt.split("\n").indexOf(vipLine);
+  assert.ok(!prompt.split("\n")[vipLineIndex + 1]?.includes("Comment le présenter"));
+});
+
 test("buildSystemPrompt inclut la bio seulement si elle est fournie", () => {
   const withBio = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "Passionnée de yoga", tiers: [] });
   const withoutBio = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [] });
   assert.match(withBio, /Passionnée de yoga/);
   assert.doesNotMatch(withoutBio, /Contexte sur toi/);
+});
+
+// --- Mémoire fan (notes IA) & potentiel -------------------------------------
+
+test("buildSystemPrompt inclut fanNotes seulement si fourni, sans jamais dire qu'il s'agit de 'notes'", () => {
+  const withNotes = buildSystemPrompt({
+    creatorName: "Luna",
+    tone: "doux_complice",
+    bio: "",
+    tiers: [],
+    fanNotes: "Aime la moto, encore hésitante sur le palier 2",
+  });
+  const withoutNotes = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [] });
+  assert.match(withNotes, /Aime la moto, encore hésitante sur le palier 2/);
+  assert.match(withNotes, /ne récite jamais ces notes mot pour mot/);
+  assert.doesNotMatch(withoutNotes, /te souviens de cette personne/);
+});
+
+test("buildSystemPrompt avec potentiel 'élevé' encourage à avancer vers les offres, sans forcer", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], fanPotential: "élevé" });
+  assert.match(prompt, /particulièrement engagée/);
+  assert.match(prompt, /sans pour autant forcer le sujet/);
+});
+
+test("buildSystemPrompt avec potentiel 'faible' privilégie la connexion plutôt que la vente", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], fanPotential: "faible" });
+  assert.match(prompt, /peu engagée/);
+  assert.match(prompt, /inutile\s+d'insister/);
+});
+
+test("buildSystemPrompt sans potentiel (ou 'moyen', ou inconnu) n'ajoute aucune nuance de rythme", () => {
+  for (const fanPotential of [undefined, null, "moyen", "valeur-inconnue"]) {
+    const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], fanPotential });
+    assert.doesNotMatch(prompt, /particulièrement engagée/);
+    assert.doesNotMatch(prompt, /peu engagée/);
+  }
+});
+
+test("buildSystemPrompt garde toujours les deux garde-fous [GARDE-FOU], même avec fanNotes et un potentiel élevé", () => {
+  const prompt = buildSystemPrompt({
+    creatorName: "Luna",
+    tone: "doux_complice",
+    bio: "",
+    tiers: [],
+    fanNotes: "Fan très engagé, a déjà acheté deux paliers",
+    fanPotential: "élevé",
+  });
+  assert.match(prompt, /\[GARDE-FOU\]/g);
 });
 
 // --- Langue du bot (multilingue) -------------------------------------------

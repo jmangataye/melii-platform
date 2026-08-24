@@ -162,6 +162,7 @@ export async function generateBotReply(
     tiers,
     language: creator.personaLanguage,
     fanNotes: fanProfile?.notes || null,
+    fanPotential: fanProfile?.potential || null,
   });
 
   const history = await getRecentMessages({ creatorId: creator.id, chatId, limit: 20 });

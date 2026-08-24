@@ -1,24 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getOrCreateVisitorId } from "./visitor";
 
 type Message = { role: "user" | "assistant"; content: string };
-
-function getOrCreateVisitorId(creatorId: string): string {
-  const key = `melii_visitor_${creatorId}`;
-  try {
-    const existing = window.localStorage.getItem(key);
-    if (existing) return existing;
-    const fresh = crypto.randomUUID();
-    window.localStorage.setItem(key, fresh);
-    return fresh;
-  } catch {
-    // localStorage indisponible (navigation privée stricte, etc.) : on
-    // retombe sur un id de session qui ne survit pas au rechargement —
-    // dégradation acceptable plutôt qu'un chat cassé.
-    return crypto.randomUUID();
-  }
-}
 
 export default function ChatWidget({
   creatorId,
@@ -113,8 +98,15 @@ export default function ChatWidget({
   }
 
   return (
-    <div className="flex-1 flex flex-col card p-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[50vh]">
+    <div className="flex-1 flex flex-col card glow p-0 overflow-hidden relative">
+      <div
+        aria-hidden
+        className="absolute -top-20 -left-16 w-64 h-64 rounded-full opacity-[0.08] blur-3xl pointer-events-none"
+        style={{
+          background: `radial-gradient(circle, ${accentColor || "var(--accent-2)"}, transparent 70%)`,
+        }}
+      />
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[50vh] relative">
         {loadingHistory && (
           <div className="space-y-3">
             <div className="max-w-[70%] h-9 rounded-2xl rounded-bl-sm bg-surface-2 animate-pulse" />
@@ -127,7 +119,7 @@ export default function ChatWidget({
           </div>
         )}
         {!loadingHistory && messages.length === 0 && (
-          <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-2 text-sm">
+          <div className="fade-in-up max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-2.5 text-sm shadow-sm">
             Hey toi 😊 contente que tu sois là ! Raconte-moi un peu qui tu es, je suis{" "}
             {displayName}.
           </div>
@@ -135,7 +127,7 @@ export default function ChatWidget({
         {messages.map((m, i) => (
           <div
             key={i}
-            className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap break-words ${
+            className={`fade-in-up max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words shadow-sm ${
               m.role === "user"
                 ? "ml-auto rounded-br-sm gradient-btn text-white"
                 : "rounded-bl-sm bg-surface-2"
@@ -146,7 +138,7 @@ export default function ChatWidget({
           </div>
         ))}
         {sending && (
-          <div className="space-y-2">
+          <div className="space-y-2 fade-in-up">
             <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-3 flex items-center gap-1.5" aria-label={`${displayName} est en train d'écrire`}>
               <span className="typing-dot" />
               <span className="typing-dot" />
@@ -166,10 +158,10 @@ export default function ChatWidget({
           e.preventDefault();
           send();
         }}
-        className="border-t border-border p-3 flex items-center gap-2"
+        className="border-t border-border p-3 flex items-center gap-2 relative bg-surface"
       >
         <input
-          className="input flex-1"
+          className="input flex-1 rounded-full"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Écris un message..."

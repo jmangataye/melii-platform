@@ -16,6 +16,7 @@ export function buildSystemPrompt(input: {
   tiers: { order: number; label: string; priceCents: number; currency: string; shortUrl: string; sellAngle?: string }[];
   language?: string;
   fanNotes?: string | null;
+  fanPotential?: string | null;
 }): string;
 
 export function containsSafetyKeyword(text: string): boolean;

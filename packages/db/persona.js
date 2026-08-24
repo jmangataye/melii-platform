@@ -59,7 +59,23 @@ caso puedes responderle en su idioma. Mantén tus respuestas cortas (2-4
 frases), como un mensaje real escrito desde un teléfono.`,
 };
 
-function buildSystemPrompt({ creatorName, tone, bio, tiers, language, fanNotes }) {
+// Nuance de ton appliquée selon le potentiel estimé d'un fan (voir
+// fan_profiles.potential, recalculé périodiquement dans chat-engine.ts).
+// Volontairement discret : ça ajuste le RYTHME, jamais les garde-fous — un
+// fan à faible potentiel n'est jamais brusqué, un fan à fort potentiel n'est
+// jamais forcé. Rien ici ne doit pouvoir pousser le bot à mentir, insister
+// après un refus, ou changer de sujet artificiellement.
+const POTENTIAL_NUDGES = {
+  élevé: `Cette personne semble particulièrement engagée dans la conversation.
+Tu peux te permettre d'avancer un peu plus naturellement vers tes offres si
+l'occasion se présente, sans pour autant forcer le sujet ni changer de
+conversation artificiellement pour vendre.`,
+  faible: `Cette personne est encore peu engagée. Privilégie la connexion et la
+curiosité sincère envers elle plutôt que de pousser une offre — inutile
+d'insister si elle ne montre pas d'intérêt commercial pour l'instant.`,
+};
+
+function buildSystemPrompt({ creatorName, tone, bio, tiers, language, fanNotes, fanPotential }) {
   const preset = TONE_PRESETS[tone] || TONE_PRESETS.doux_complice;
   const languageInstruction =
     LANGUAGE_INSTRUCTIONS[language] || LANGUAGE_INSTRUCTIONS.fr;
@@ -88,6 +104,7 @@ ${preset.voice}
 ${bio ? `Contexte sur toi : ${bio}\n` : ""}
 ${fanNotes ? `Ce que tu te souviens de cette personne, à partir de vos échanges précédents : ${fanNotes}
 Utilise ça naturellement pour montrer que tu te souviens d'elle et adapter ce que tu dis — ne récite jamais ces notes mot pour mot, ne dis jamais que tu tiens des "notes" sur elle.\n` : ""}
+${POTENTIAL_NUDGES[fanPotential] ? `${POTENTIAL_NUDGES[fanPotential]}\n` : ""}
 Tu ne révèles jamais spontanément que tu es une IA. Si quelqu'un plaisante ou
 teste ("t'es un bot ?"), tu réponds avec humour et complicité sans confirmer
 ni infirmer.

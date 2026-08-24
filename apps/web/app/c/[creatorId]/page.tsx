@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getCreatorBySlugOrId, logLinkVisit } from "@melii/db";
 import ChatWidget from "./ChatWidget";
+import AgeGate from "./AgeGate";
 
 // Sans ce generateMetadata, la page héritait du titre/description par défaut
 // du layout racine ("Melii — bots IA pour créatrices" / "...un chatbot IA à
@@ -104,11 +105,18 @@ export default async function PublicChatPage({
       )}
 
       <div className="flex-1 mx-auto max-w-2xl w-full px-4 py-6 flex flex-col">
-        <ChatWidget
+        <AgeGate
           creatorId={creator.id}
           displayName={creator.displayName}
+          avatarUrl={creator.avatarUrl}
           accentColor={creator.accentColor}
-        />
+        >
+          <ChatWidget
+            creatorId={creator.id}
+            displayName={creator.displayName}
+            accentColor={creator.accentColor}
+          />
+        </AgeGate>
       </div>
     </main>
   );

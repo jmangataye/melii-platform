@@ -205,6 +205,8 @@ export function getFanProfile(creatorId: string, chatId: string): Promise<FanPro
 export function getMessageCountForChat(creatorId: string, chatId: string): Promise<number>;
 export function upsertFanNotes(creatorId: string, chatId: string, input: { notes: string; potential?: string | null; summarizedThrough: number }): Promise<void>;
 export function listFanProfiles(creatorId: string, limit?: number): Promise<FanSummary[]>;
+export function deleteFanData(creatorId: string, chatId: string): Promise<void>;
+export function recordAgeConsent(creatorId: string, chatId: string): Promise<void>;
 
 /** Exporté uniquement pour les tests — voir le commentaire dans index.js. */
 export function backfillLegacyCreators(): Promise<void>;

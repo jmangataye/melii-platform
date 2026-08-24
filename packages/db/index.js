@@ -824,6 +824,43 @@ async function listFanProfiles(creatorId, limit = 100) {
   }));
 }
 
+// Suppression ciblée d'UNE conversation (pas tout le compte créatrice —
+// pour ça, voir deleteCreator plus haut) : messages, notes IA et trace de
+// consentement d'âge pour un chat_id précis. Sert à honorer une demande de
+// suppression de données faite par un fan précis (voir bouton "Supprimer"
+// dans le panneau Fans du dashboard).
+async function deleteFanData(creatorId, chatId) {
+  await query(`DELETE FROM conversation_messages WHERE creator_id = $1 AND chat_id = $2`, [
+    creatorId,
+    String(chatId),
+  ]);
+  await query(`DELETE FROM fan_profiles WHERE creator_id = $1 AND chat_id = $2`, [
+    creatorId,
+    String(chatId),
+  ]);
+  await query(`DELETE FROM age_consents WHERE creator_id = $1 AND chat_id = $2`, [
+    creatorId,
+    String(chatId),
+  ]);
+  await query(`DELETE FROM conversation_relances WHERE creator_id = $1 AND chat_id = $2`, [
+    creatorId,
+    String(chatId),
+  ]);
+}
+
+// --- Consentement d'âge (visiteur) -----------------------------------------
+// Horodatage de preuve, pas un verrou serveur — voir le commentaire au-dessus
+// de la table age_consents dans schema.js pour le détail de cette limite
+// assumée.
+async function recordAgeConsent(creatorId, chatId) {
+  await query(
+    `INSERT INTO age_consents (id, creator_id, chat_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (creator_id, chat_id) DO NOTHING`,
+    [id(), creatorId, String(chatId)]
+  );
+}
+
 // --- Vue d'ensemble pour le dashboard admin -------------------------------
 // Chaque métrique est agrégée dans sa propre sous-requête avant d'être
 // jointe à creators : joindre tiers/sale_declarations/conversation_messages
@@ -1199,6 +1236,8 @@ module.exports = {
   getMessageCountForChat,
   upsertFanNotes,
   listFanProfiles,
+  deleteFanData,
+  recordAgeConsent,
   // Exporté uniquement pour les tests (voir new-features.test.js) — le
   // backfill réel passe par ensureBackfilled(), mis en cache par process ;
   // ce export permet de le redéclencher explicitement dans un test sans

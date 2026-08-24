@@ -170,4 +170,17 @@ CREATE TABLE IF NOT EXISTS fan_profiles (
 
 CREATE INDEX IF NOT EXISTS idx_fan_profiles_creator
   ON fan_profiles (creator_id, updated_at DESC);
+
+-- Trace du consentement "18 ans ou plus" affiché au visiteur avant son
+-- premier message (voir AgeGate.tsx) : ce n'est PAS un verrou technique côté
+-- serveur (chat_id est généré côté client, donc trivialement falsifiable) —
+-- c'est un horodatage de preuve, au cas où la question se poserait un jour.
+-- Le blocage réel se fait côté interface (aucun accès au chat avant clic).
+CREATE TABLE IF NOT EXISTS age_consents (
+  id           TEXT PRIMARY KEY,
+  creator_id   TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  chat_id      TEXT NOT NULL,
+  consented_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (creator_id, chat_id)
+);
 `;

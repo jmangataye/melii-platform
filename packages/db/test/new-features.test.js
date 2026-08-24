@@ -661,3 +661,42 @@ test("listFanProfiles ne renvoie que les conversations de la créatrice demandé
   assert.ok(fansOfA.every((f) => f.chatId !== "chat-b"));
   assert.equal(fansOfA.length, 1);
 });
+
+// --- Consentement d'âge -----------------------------------------------------
+
+test("recordAgeConsent enregistre une trace horodatée, sans erreur si appelé deux fois", async () => {
+  const c = await makeCreator("ageconsent");
+  await db.recordAgeConsent(c.id, "chat-consent");
+  // Deuxième appel (ex. double-clic du visiteur) : ne doit pas planter, et
+  // ON CONFLICT DO NOTHING garde la première date plutôt que de la décaler.
+  await assert.doesNotReject(() => db.recordAgeConsent(c.id, "chat-consent"));
+
+  const { rows } = await rawPool.query(
+    `SELECT COUNT(*) as n FROM age_consents WHERE creator_id = $1 AND chat_id = $2`,
+    [c.id, "chat-consent"]
+  );
+  assert.equal(Number(rows[0].n), 1, "un seul enregistrement malgré le double appel");
+});
+
+// --- Suppression ciblée d'une conversation (droit à l'oubli par fan) -------
+
+test("deleteFanData efface messages, notes et consentement d'âge d'UN chat_id, sans toucher aux autres", async () => {
+  const c = await makeCreator("fandeleteone");
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-todelete", role: "user", content: "à effacer" });
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-tokeep", role: "user", content: "à garder" });
+  await db.upsertFanNotes(c.id, "chat-todelete", { notes: "notes à effacer", potential: "moyen", summarizedThrough: 1 });
+  await db.recordAgeConsent(c.id, "chat-todelete");
+
+  await db.deleteFanData(c.id, "chat-todelete");
+
+  assert.equal(await db.getMessageCountForChat(c.id, "chat-todelete"), 0);
+  assert.equal(await db.getFanProfile(c.id, "chat-todelete"), null);
+  const { rows } = await rawPool.query(
+    `SELECT COUNT(*) as n FROM age_consents WHERE creator_id = $1 AND chat_id = $2`,
+    [c.id, "chat-todelete"]
+  );
+  assert.equal(Number(rows[0].n), 0);
+
+  // La conversation voisine ne doit pas être affectée.
+  assert.equal(await db.getMessageCountForChat(c.id, "chat-tokeep"), 1);
+});
