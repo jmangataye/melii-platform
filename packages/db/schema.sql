@@ -1,7 +1,6 @@
 -- Schéma PostgreSQL — copie lisible de schema.js (source réellement utilisée
 -- à l'exécution, embarquée en JS pour survivre au bundling ; si vous
 -- modifiez l'un, reportez le changement dans l'autre).
-
 CREATE TABLE IF NOT EXISTS creators (
   id                      TEXT PRIMARY KEY,
   email                   TEXT UNIQUE NOT NULL,
@@ -39,6 +38,10 @@ ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain TEXT UNIQUE;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain_verify_token TEXT;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS custom_domain_verified BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE creators ADD COLUMN IF NOT EXISTS relance_enabled BOOLEAN NOT NULL DEFAULT false;
+-- Langue de réponse du bot (fr/en/es) — voir packages/db/persona.js pour la
+-- liste des langues gérées et la couverture des mots-clés de sécurité qui va
+-- avec. 'fr' par défaut pour rester identique au comportement historique.
+ALTER TABLE creators ADD COLUMN IF NOT EXISTS persona_language TEXT NOT NULL DEFAULT 'fr';
 
 CREATE TABLE IF NOT EXISTS tiers (
   id           TEXT PRIMARY KEY,
@@ -120,3 +123,19 @@ CREATE TABLE IF NOT EXISTS conversation_relances (
   sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (creator_id, chat_id)
 );
+
+-- Visites du lien de chat public (/c/[creatorId]), avec une "source"
+-- optionnelle (?src=bio, ?src=story...) que la créatrice choisit elle-même
+-- en générant un lien tagué depuis l'onglet "Chat en ligne" — sert à savoir
+-- quel canal de partage amène vraiment du monde (voir getVisitsBySource dans
+-- index.js). 'direct' est la valeur par défaut quand aucun tag n'est présent
+-- dans l'URL (lien copié tel quel, ou lien historique déjà partagé).
+CREATE TABLE IF NOT EXISTS link_visits (
+  id         TEXT PRIMARY KEY,
+  creator_id TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  source     TEXT NOT NULL DEFAULT 'direct',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_link_visits_creator
+  ON link_visits (creator_id, created_at);

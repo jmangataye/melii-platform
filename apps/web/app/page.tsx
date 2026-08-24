@@ -1,5 +1,8 @@
 import Link from "next/link";
 import LandingChatPreview from "./LandingChatPreview";
+import LandingFAQ from "./LandingFAQ";
+import CommissionCalculator from "./CommissionCalculator";
+import StickyMobileCTA from "./StickyMobileCTA";
 
 const STEPS = [
   {
@@ -30,7 +33,7 @@ const TONES = [
 
 export default function LandingPage() {
   return (
-    <main className="flex-1">
+    <main className="flex-1 pb-20 sm:pb-0">
       <Nav />
 
       {/* Hero */}
@@ -54,6 +57,7 @@ export default function LandingPage() {
             </p>
             <div className="mt-10 flex items-center justify-center lg:justify-start gap-4">
               <Link
+                id="hero-cta"
                 href="/signup"
                 className="gradient-btn rounded-full px-7 py-3 font-medium text-white shadow-lg shadow-accent/20"
               >
@@ -160,7 +164,7 @@ export default function LandingPage() {
 
       {/* Pricing model of the platform itself */}
       <section className="mx-auto max-w-3xl px-6 py-16">
-        <div className="card p-8 text-center">
+        <div className="text-center mb-8">
           <h2 className="text-2xl font-semibold mb-3">Aucun abonnement fixe</h2>
           <p className="text-muted leading-relaxed">
             Melii se rémunère uniquement à la commission sur les ventes déclarées.
@@ -168,7 +172,17 @@ export default function LandingPage() {
             (Dropfans ou autre) — on ne touche jamais à vos fonds.
           </p>
         </div>
+        <CommissionCalculator />
       </section>
+
+      {/* FAQ */}
+      <section className="mx-auto max-w-5xl px-6 py-16">
+        <h2 className="text-2xl font-semibold text-center mb-2">Questions fréquentes</h2>
+        <p className="text-muted text-center mb-10">Tout ce qu&apos;on nous demande avant de se lancer.</p>
+        <LandingFAQ />
+      </section>
+
+      <StickyMobileCTA heroCtaId="hero-cta" />
 
       <footer className="mx-auto max-w-5xl px-6 py-10 text-center text-sm text-muted space-y-3">
         <p>

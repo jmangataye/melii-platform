@@ -9,6 +9,7 @@ export interface Creator {
   displayName: string;
   personaTone: string;
   personaBio: string;
+  personaLanguage: string;
   telegramBotToken: string | null;
   telegramBotUsername: string | null;
   telegramWebhookSecret: string | null;
@@ -60,6 +61,16 @@ export interface DailyClicks {
   clicks: number;
 }
 
+export interface VisitsBySource {
+  source: string;
+  visits: number;
+}
+
+export interface FanSegmentation {
+  newFans: number;
+  returningFans: number;
+}
+
 export interface Stats {
   clicksByTier: Record<string, number>;
   clicksByDay: DailyClicks[];
@@ -67,6 +78,8 @@ export interface Stats {
   commissionRate: number;
   commissionOwedCents: number;
   referralCount: number;
+  visitsBySource: VisitsBySource[];
+  fanSegmentation: FanSegmentation;
 }
 
 export interface AdminCreatorSummary {
@@ -115,7 +128,7 @@ export function getCreatorByReferralCode(code: string | null | undefined): Promi
 export function updateCreatorSlug(creatorId: string, rawSlug: string): Promise<Creator>;
 export class SlugTakenError extends Error {}
 export function deleteCreator(id: string): Promise<boolean>;
-export function updateCreatorPersona(id: string, input: { tone: string; bio: string; displayName: string }): Promise<Creator>;
+export function updateCreatorPersona(id: string, input: { tone: string; bio: string; displayName: string; language?: string }): Promise<Creator>;
 export function updateCreatorProfile(id: string, input: { avatarUrl?: string | null; accentColor?: string | null; galleryUrls?: string[] }): Promise<Creator | null>;
 export function updateCreatorTelegram(id: string, input: { token: string | null; username: string | null; webhookSecret: string | null; webhookReady: boolean }): Promise<Creator>;
 export function updateCreatorPasswordHash(id: string, passwordHash: string): Promise<void>;
@@ -130,14 +143,25 @@ export function deleteTier(creatorId: string, tierId: string): Promise<void>;
 export function logClick(input: { creatorId: string; tierId: string; telegramChatId?: string | null }): Promise<void>;
 export function declareSale(input: { creatorId: string; tierId: string; amountCents: number; currency?: string; note?: string }): Promise<void>;
 export function listSales(creatorId: string): Promise<Sale[]>;
-export function getStats(creatorId: string): Promise<Stats>;
+export function getStats(creatorId: string, days?: number): Promise<Stats>;
 export function getClicksByDay(creatorId: string, days?: number): Promise<DailyClicks[]>;
 export function getReferralCount(creatorId: string): Promise<number>;
+export function logLinkVisit(input: { creatorId: string; source?: string | null }): Promise<void>;
+export function getVisitsBySource(creatorId: string, days?: number): Promise<VisitsBySource[]>;
+export function getFanSegmentation(creatorId: string, days?: number): Promise<FanSegmentation>;
 export function appendMessage(input: { creatorId: string; chatId: string; role: "user" | "assistant"; content: string; flagged?: boolean }): Promise<void>;
 export function getRecentMessages(input: { creatorId: string; chatId: string; limit?: number }): Promise<{ role: string; content: string }[]>;
 export function getConversationVolume(creatorId: string, sinceDays?: number): Promise<number>;
 export function purgeOldConversations(days?: number): Promise<number>;
 export function listFlaggedConversations(limit?: number): Promise<FlaggedConversation[]>;
+export interface ContextMessage {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: string;
+  flagged: boolean;
+}
+export function getMessageContext(creatorId: string, chatId: string, messageId: string, contextSize?: number): Promise<ContextMessage[]>;
 export function markFlagReviewed(messageId: string): Promise<boolean>;
 export function adminListCreators(): Promise<AdminCreatorSummary[]>;
 

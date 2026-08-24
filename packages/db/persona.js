@@ -36,8 +36,33 @@ sourire autant que vendre.`,
   },
 };
 
-function buildSystemPrompt({ creatorName, tone, bio, tiers }) {
+// Langues de réponse gérées pour le bot — choisies par la créatrice dans
+// l'onglet Personnalité (persona_language en base, 'fr' par défaut pour ne
+// rien changer au comportement historique). Le reste des instructions du
+// prompt système reste rédigé en français : un modèle Claude suit très
+// fiablement une instruction "réponds en anglais/espagnol" donnée en
+// français — pas besoin de traduire tout le prompt, seule la consigne finale
+// de langue change réellement le comportement observable.
+const VALID_LANGUAGES = ["fr", "en", "es"];
+
+const LANGUAGE_INSTRUCTIONS = {
+  fr: `Réponds toujours en français sauf si la personne t'écrit dans une autre
+langue, auquel cas tu réponds dans sa langue. Garde tes réponses courtes
+(2-4 phrases), comme un vrai message envoyé depuis un téléphone.`,
+  en: `Always reply in English by default, even though these instructions are
+written in French — unless the person writes to you in a different language,
+in which case you can reply in their language instead. Keep your replies
+short (2-4 sentences), like a real message typed from a phone.`,
+  es: `Responde siempre en español por defecto, aunque estas instrucciones
+estén en francés — salvo si la persona te escribe en otro idioma, en cuyo
+caso puedes responderle en su idioma. Mantén tus respuestas cortas (2-4
+frases), como un mensaje real escrito desde un teléfono.`,
+};
+
+function buildSystemPrompt({ creatorName, tone, bio, tiers, language }) {
   const preset = TONE_PRESETS[tone] || TONE_PRESETS.doux_complice;
+  const languageInstruction =
+    LANGUAGE_INSTRUCTIONS[language] || LANGUAGE_INSTRUCTIONS.fr;
 
   const tiersDescription =
     tiers && tiers.length
@@ -81,30 +106,79 @@ tient des propos qui sortent du cadre normal (harcèlement, demandes
 illégales), tu arrêtes immédiatement le ton commercial, tu restes
 bienveillant et sérieux, et tu n'envoies aucun lien dans cette conversation.
 
-Réponds toujours en français sauf si la personne t'écrit dans une autre
-langue, auquel cas tu réponds dans sa langue. Garde tes réponses courtes
-(2-4 phrases), comme un vrai message envoyé depuis un téléphone.`;
+${languageInstruction}`;
 }
 
-const SAFETY_KEYWORDS = [
-  "mineur", "mineure", "ans j'ai", "je suis jeune", "collège", "lycée",
-  "suicide", "me tuer", "me faire du mal", "envie de mourir",
-  "menace", "chantage", "carte volée", "sans son accord",
-];
+// [GARDE-FOU] Détection de mots-clés de détresse/minorité/chantage, AVANT tout
+// appel au modèle (voir chat-engine.ts) — indépendante de la langue de
+// réponse configurée par la créatrice (persona_language) : une fan peut très
+// bien écrire dans une langue différente de celle du bot (ex. bot réglé en
+// français, message reçu en anglais). On vérifie donc TOUJOURS l'ensemble des
+// langues gérées, jamais une seule — restreindre à la langue du bot laisserait
+// passer un vrai signal d'alerte écrit dans une autre langue, ce qui romprait
+// ce garde-fou. La liste française est inchangée depuis la v1 (mêmes tests).
+const SAFETY_KEYWORDS_BY_LANG = {
+  fr: [
+    "mineur", "mineure", "ans j'ai", "je suis jeune", "collège", "lycée",
+    "suicide", "me tuer", "me faire du mal", "envie de mourir",
+    "menace", "chantage", "carte volée", "sans son accord",
+  ],
+  en: [
+    "i'm a minor", "im a minor", "i am underage", "i'm underage", "im underage",
+    "i'm 14", "i'm 15", "i'm 16", "i'm 17", "middle school", "high school",
+    "suicide", "kill myself", "hurt myself", "want to die", "wanna die",
+    "threaten", "blackmail", "stolen card", "without her consent", "without his consent",
+    "without consent",
+  ],
+  es: [
+    "soy menor", "menor de edad", "tengo 14", "tengo 15", "tengo 16", "tengo 17",
+    "secundaria", "instituto",
+    "suicidio", "matarme", "hacerme daño", "quiero morir", "ganas de morir",
+    "amenaza", "chantaje", "tarjeta robada", "sin su consentimiento",
+  ],
+};
+
+const ALL_SAFETY_KEYWORDS = Object.values(SAFETY_KEYWORDS_BY_LANG).flat();
 
 function containsSafetyKeyword(text) {
   const lowered = (text || "").toLowerCase();
-  return SAFETY_KEYWORDS.some((k) => lowered.includes(k));
+  return ALL_SAFETY_KEYWORDS.some((k) => lowered.includes(k));
 }
 
-const SAFE_FALLBACK_REPLY =
-  "Je m'arrête un instant ici — ce que tu dis mérite d'être pris au sérieux, " +
-  "pas un message de vente. Si tu traverses un moment difficile, parles-en à " +
-  "quelqu'un en qui tu as confiance ou à une ligne d'écoute locale.";
+// Réponse de repli envoyée à la place du bot dès qu'un message est flagged —
+// localisée dans la langue configurée du bot (persona_language) plutôt que
+// systématiquement en français, pour rester compréhensible par la personne
+// qui vient d'écrire un signal de détresse réel. 'fr' reste le défaut.
+const SAFE_FALLBACK_REPLIES = {
+  fr:
+    "Je m'arrête un instant ici — ce que tu dis mérite d'être pris au sérieux, " +
+    "pas un message de vente. Si tu traverses un moment difficile, parles-en à " +
+    "quelqu'un en qui tu as confiance ou à une ligne d'écoute locale.",
+  en:
+    "I'm going to pause here for a moment — what you just said deserves to be taken " +
+    "seriously, not a sales message. If you're going through something difficult, " +
+    "please talk to someone you trust or a local helpline.",
+  es:
+    "Me detengo un momento aquí — lo que dices merece tomarse en serio, no un " +
+    "mensaje de venta. Si estás pasando por un momento difícil, habla con alguien " +
+    "de confianza o con una línea de ayuda local.",
+};
+
+// Conservé pour compatibilité (code déjà écrit contre cette constante) — vaut
+// toujours la version française, identique au comportement d'avant l'ajout
+// du multilingue.
+const SAFE_FALLBACK_REPLY = SAFE_FALLBACK_REPLIES.fr;
+
+function getSafeFallbackReply(language) {
+  return SAFE_FALLBACK_REPLIES[language] || SAFE_FALLBACK_REPLIES.fr;
+}
 
 module.exports = {
   TONE_PRESETS,
+  VALID_LANGUAGES,
   buildSystemPrompt,
   containsSafetyKeyword,
   SAFE_FALLBACK_REPLY,
+  SAFE_FALLBACK_REPLIES,
+  getSafeFallbackReply,
 };

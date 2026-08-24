@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import BotPreview from "../BotPreview";
+import { ToastProvider, useToast, useConfirm, CopyButton, StatusPill, EmptyState } from "./ui";
 
 type Creator = {
   id: string;
@@ -9,6 +11,7 @@ type Creator = {
   displayName: string;
   personaTone: string;
   personaBio: string;
+  personaLanguage: string;
   telegramBotUsername: string | null;
   telegramWebhookReady: boolean;
   hasTelegramToken: boolean;
@@ -35,6 +38,9 @@ type Tier = {
 
 type DailyClicks = { day: string; clicks: number };
 
+type VisitsBySource = { source: string; visits: number };
+type FanSegmentation = { newFans: number; returningFans: number };
+
 type Stats = {
   clicksByTier: Record<string, number>;
   clicksByDay: DailyClicks[];
@@ -42,6 +48,8 @@ type Stats = {
   commissionRate: number;
   commissionOwedCents: number;
   referralCount: number;
+  visitsBySource: VisitsBySource[];
+  fanSegmentation: FanSegmentation;
 };
 
 type Sale = {
@@ -55,6 +63,7 @@ type Sale = {
 };
 
 const TABS = [
+  { key: "overview", label: "Vue d'ensemble" },
   { key: "chat", label: "Chat en ligne" },
   { key: "persona", label: "Personnalité" },
   { key: "liens", label: "Liens & tarifs" },
@@ -72,16 +81,45 @@ const TONES = [
   { value: "joueur_taquin", label: "Joueur & taquin" },
 ];
 
+// Doit rester synchronisé avec VALID_LANGUAGES dans packages/db/persona.js.
+const LANGUAGES = [
+  { value: "fr", label: "Français" },
+  { value: "en", label: "Anglais" },
+  { value: "es", label: "Espagnol" },
+];
+
+// Sources pré-remplies proposées pour générer un lien tracké (voir
+// ChatLinkTab) — la créatrice peut aussi taper un libellé personnalisé.
+const QUICK_LINK_SOURCES = [
+  { value: "bio", label: "Bio" },
+  { value: "story", label: "Story" },
+  { value: "post", label: "Post" },
+];
+
+const REFERRAL_DISCOUNT_CAP_COUNT = 5; // -1 pt par filleule, plafonné à -5 pts (voir packages/db/index.js)
+const BIO_MAX_LENGTH = 800; // doit rester synchronisé avec la troncature côté /api/persona
+
 function eur(cents: number) {
   return (cents / 100).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
 }
 
+// Le Provider doit envelopper l'arbre qui utilise useToast()/useConfirm() —
+// on sépare donc ce composant "coquille" du vrai contenu (DashboardShell).
 export default function DashboardApp({ initialDisplayName }: { initialDisplayName: string }) {
+  return (
+    <ToastProvider>
+      <DashboardShell initialDisplayName={initialDisplayName} />
+    </ToastProvider>
+  );
+}
+
+function DashboardShell({ initialDisplayName }: { initialDisplayName: string }) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabKey>("chat");
+  const [tab, setTab] = useState<TabKey>("overview");
   const [creator, setCreator] = useState<Creator | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -99,9 +137,36 @@ export default function DashboardApp({ initialDisplayName }: { initialDisplayNam
     setLoading(false);
   }, [router]);
 
+  // Chargée une fois au niveau racine plutôt que dans BillingTab (comme
+  // avant) : StatsTab (tendance des revenus, entonnoir) et OverviewTab (KPI)
+  // en ont désormais besoin aussi, autant éviter un fetch en double.
+  const loadSales = useCallback(async () => {
+    const res = await fetch("/api/sales");
+    if (!res.ok) return;
+    const json = await res.json();
+    setSales(json.sales || []);
+  }, []);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    loadSales();
+  }, [refresh, loadSales]);
+
+  // Le service (Render, plan gratuit) peut s'être mis en veille — le tout
+  // premier /api/me après une période d'inactivité peut prendre bien plus
+  // longtemps qu'un chargement normal. Un squelette qui reste figé sans
+  // explication laisse croire à une panne ; on ajoute un indice après un
+  // délai plutôt que dès le premier instant (qui couvrirait aussi les
+  // chargements normaux, rapides).
+  const [slowLoading, setSlowLoading] = useState(false);
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setSlowLoading(true), 4000);
+    return () => {
+      clearTimeout(t);
+      setSlowLoading(false);
+    };
+  }, [loading]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -110,61 +175,123 @@ export default function DashboardApp({ initialDisplayName }: { initialDisplayNam
   }
 
   if (loading || !creator) {
-    return <DashboardSkeleton />;
+    return <DashboardSkeleton slow={slowLoading} />;
   }
 
+  const navItems = (
+    <>
+      {TABS.map((t) => (
+        <NavButton key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
+          {t.label}
+        </NavButton>
+      ))}
+    </>
+  );
+
   return (
-    <div className="flex-1 flex flex-col">
-      <header className="border-b border-border">
-        <div className="mx-auto max-w-4xl px-6 py-5 flex items-center justify-between">
-          <span className="font-semibold tracking-tight">
-            melii<span className="gradient-text">.</span>{" "}
-            <span className="text-muted font-normal">/ {creator.displayName || initialDisplayName}</span>
+    <div className="flex-1 flex flex-col md:flex-row">
+      {/* Sidebar — écrans md+ uniquement. Sur mobile on garde la barre
+          d'onglets horizontale scrollable existante, plus adaptée au tactile
+          qu'une sidebar rétractable pour la taille de cette app. */}
+      <aside className="hidden md:flex md:w-56 md:flex-col md:shrink-0 border-r border-border">
+        <div className="px-5 py-5 border-b border-border">
+          <span className="font-semibold tracking-tight block">
+            melii<span className="gradient-text">.</span>
           </span>
-          <div className="flex items-center gap-4">
-            {isAdmin && (
-              <button
-                onClick={() => router.push("/admin")}
-                className="text-sm text-muted hover:text-foreground transition"
-              >
-                Admin
-              </button>
-            )}
-            <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">
-              Se déconnecter
-            </button>
-          </div>
+          <p className="text-xs text-muted mt-1 truncate">{creator.displayName || initialDisplayName}</p>
         </div>
-      </header>
-
-      <div className="mx-auto max-w-4xl w-full px-6 pt-6">
-        <nav className="flex gap-1 border-b border-border overflow-x-auto">
-          {TABS.map((t) => (
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">{navItems}</nav>
+        <div className="p-3 border-t border-border space-y-0.5">
+          {isAdmin && (
             <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`px-4 py-2.5 text-sm whitespace-nowrap rounded-t-lg transition ${
-                tab === t.key
-                  ? "text-foreground border-b-2 border-accent -mb-px font-medium"
-                  : "text-muted hover:text-foreground"
-              }`}
+              onClick={() => router.push("/admin")}
+              className="w-full text-left px-3 py-2 rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface-2/60 transition"
             >
-              {t.label}
+              Admin
             </button>
-          ))}
-        </nav>
-      </div>
+          )}
+          <button
+            onClick={logout}
+            className="w-full text-left px-3 py-2 rounded-lg text-sm text-muted hover:text-foreground hover:bg-surface-2/60 transition"
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </aside>
 
-      <main className="mx-auto max-w-4xl w-full flex-1 px-6 py-8">
-        {tab === "chat" && <ChatLinkTab creator={creator} onChanged={refresh} />}
-        {tab === "persona" && <PersonaTab creator={creator} onSaved={refresh} />}
-        {tab === "liens" && <TiersTab tiers={tiers} onChanged={refresh} />}
-        {tab === "telegram" && <TelegramTab creator={creator} onChanged={refresh} />}
-        {tab === "stats" && <StatsTab stats={stats} tiers={tiers} />}
-        {tab === "facturation" && <BillingTab stats={stats} tiers={tiers} onChanged={refresh} />}
-        {tab === "compte" && <AccountTab creator={creator} stats={stats} onChanged={refresh} />}
-      </main>
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="md:hidden border-b border-border">
+          <div className="mx-auto max-w-4xl px-6 py-5 flex items-center justify-between">
+            <span className="font-semibold tracking-tight">
+              melii<span className="gradient-text">.</span>{" "}
+              <span className="text-muted font-normal">/ {creator.displayName || initialDisplayName}</span>
+            </span>
+            <div className="flex items-center gap-4">
+              {isAdmin && (
+                <button
+                  onClick={() => router.push("/admin")}
+                  className="text-sm text-muted hover:text-foreground transition"
+                >
+                  Admin
+                </button>
+              )}
+              <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">
+                Se déconnecter
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <div className="md:hidden mx-auto max-w-4xl w-full px-6 pt-6">
+          <nav className="flex gap-1 border-b border-border overflow-x-auto">{navItems}</nav>
+        </div>
+
+        <main className="mx-auto max-w-4xl w-full flex-1 px-6 py-8">
+          {tab === "overview" && (
+            <OverviewTab
+              creator={creator}
+              tiers={tiers}
+              stats={stats}
+              isAdmin={isAdmin}
+              onNavigate={setTab}
+              onOpenAdmin={() => router.push("/admin")}
+            />
+          )}
+          {tab === "chat" && <ChatLinkTab creator={creator} onChanged={refresh} />}
+          {tab === "persona" && <PersonaTab creator={creator} onSaved={refresh} />}
+          {tab === "liens" && <TiersTab tiers={tiers} onChanged={refresh} />}
+          {tab === "telegram" && <TelegramTab creator={creator} onChanged={refresh} />}
+          {tab === "stats" && <StatsTab stats={stats} tiers={tiers} sales={sales} />}
+          {tab === "facturation" && (
+            <BillingTab stats={stats} tiers={tiers} sales={sales} onDeclared={loadSales} onChanged={refresh} />
+          )}
+          {tab === "compte" && <AccountTab creator={creator} stats={stats} onChanged={refresh} />}
+        </main>
+      </div>
     </div>
+  );
+}
+
+function NavButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`md:w-full text-left px-3 py-2.5 md:py-2 text-sm whitespace-nowrap rounded-t-lg md:rounded-lg transition ${
+        active
+          ? "text-foreground border-b-2 border-accent -mb-px font-medium md:border-b-0 md:mb-0 md:bg-surface-2"
+          : "text-muted hover:text-foreground md:hover:bg-surface-2/60"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -178,7 +305,7 @@ function Bone({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-surface-2 ${className}`} />;
 }
 
-function DashboardSkeleton() {
+function DashboardSkeleton({ slow = false }: { slow?: boolean }) {
   return (
     <div className="flex-1 flex flex-col">
       <header className="border-b border-border">
@@ -195,6 +322,12 @@ function DashboardSkeleton() {
         </div>
       </div>
       <main className="mx-auto max-w-4xl w-full flex-1 px-6 py-8 space-y-6 max-w-xl">
+        {slow && (
+          <p className="fade-in-up text-sm text-muted">
+            Ça prend un peu plus longtemps que d&apos;habitude — le service se
+            réveille après une période d&apos;inactivité, ça ne devrait plus être long.
+          </p>
+        )}
         <div className="space-y-2">
           <Bone className="h-5 w-48" />
           <Bone className="h-4 w-full" />
@@ -215,30 +348,169 @@ function DashboardSkeleton() {
 
 // ------------------------------------------------------------------
 
+function OverviewTab({
+  creator,
+  tiers,
+  stats,
+  isAdmin,
+  onNavigate,
+  onOpenAdmin,
+}: {
+  creator: Creator;
+  tiers: Tier[];
+  stats: Stats | null;
+  isAdmin: boolean;
+  onNavigate: (tab: TabKey) => void;
+  onOpenAdmin: () => void;
+}) {
+  const [flaggedCount, setFlaggedCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    fetch("/api/admin/moderation")
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setFlaggedCount((json.flagged || []).length);
+      })
+      .catch(() => {
+        if (!cancelled) setFlaggedCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
+
+  const totalClicks = stats ? Object.values(stats.clicksByTier).reduce((a, b) => a + b, 0) : 0;
+
+  const checklist = [
+    {
+      key: "persona",
+      done: (creator.personaBio || "").trim().length > 0,
+      label: "Personnalisez le ton et la bio de votre bot",
+    },
+    {
+      key: "liens",
+      done: tiers.length > 0,
+      label: "Ajoutez au moins un palier de contenu",
+    },
+    {
+      key: "chat",
+      done: totalClicks > 0,
+      label: "Partagez votre lien de chat avec votre communauté",
+    },
+    {
+      key: "telegram",
+      done: creator.telegramWebhookReady,
+      label: "Connectez Telegram",
+      optional: true,
+    },
+  ] as const;
+  const doneCount = checklist.filter((c) => c.done).length;
+
+  return (
+    <div className="space-y-8 max-w-2xl">
+      <div>
+        <h2 className="text-lg font-medium mb-1">Vue d&apos;ensemble</h2>
+        <p className="text-sm text-muted">Bonjour {creator.displayName} — voici où en est votre compte.</p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="card p-5">
+          <p className="text-xs text-muted">Clics (14 derniers jours)</p>
+          <p className="text-2xl font-semibold mt-1">{totalClicks}</p>
+        </div>
+        <div className="card p-5">
+          <p className="text-xs text-muted">Ventes déclarées</p>
+          <p className="text-2xl font-semibold mt-1">{stats ? eur(stats.totalDeclaredCents) : "–"}</p>
+        </div>
+        <div className="card p-5 col-span-2 sm:col-span-1">
+          <p className="text-xs text-muted">Paliers actifs</p>
+          <p className="text-2xl font-semibold mt-1">{tiers.length}</p>
+        </div>
+      </div>
+
+      {doneCount < checklist.length && (
+        <div className="card p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Pour bien démarrer</p>
+            <span className="text-xs text-muted">
+              {doneCount}/{checklist.length}
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {checklist.map((item) => (
+              <li key={item.key}>
+                <button
+                  onClick={() => onNavigate(item.key as TabKey)}
+                  className={`w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-lg transition ${
+                    item.done ? "text-muted" : "hover:bg-surface-2"
+                  }`}
+                >
+                  <span
+                    className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[10px] border ${
+                      item.done
+                        ? "bg-[var(--success-bg)] border-[var(--success)]/40 text-[var(--success)]"
+                        : "border-border text-transparent"
+                    }`}
+                  >
+                    ✓
+                  </span>
+                  <span className={`text-sm ${item.done ? "line-through" : ""}`}>
+                    {item.label}
+                    {"optional" in item && item.optional && !item.done && (
+                      <span className="text-muted"> (optionnel)</span>
+                    )}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isAdmin && (
+        <button
+          onClick={onOpenAdmin}
+          className="card p-5 w-full flex items-center justify-between text-left hover:border-muted transition"
+        >
+          <div>
+            <p className="text-sm font-medium">Panneau admin</p>
+            <p className="text-xs text-muted mt-1">
+              {flaggedCount === null
+                ? "Chargement…"
+                : flaggedCount > 0
+                  ? `${flaggedCount} signalement(s) à vérifier`
+                  : "Rien à signaler en ce moment"}
+            </p>
+          </div>
+          <span className="text-muted" aria-hidden="true">
+            →
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+
 function ChatLinkTab({ creator, onChanged }: { creator: Creator; onChanged: () => void }) {
-  const [copied, setCopied] = useState(false);
+  const toast = useToast();
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const link = origin ? `${origin}/c/${creator.slug || creator.id}` : "";
 
   const [slug, setSlug] = useState(creator.slug || "");
   const [savingSlug, setSavingSlug] = useState(false);
   const [slugError, setSlugError] = useState<string | null>(null);
-  const [slugSaved, setSlugSaved] = useState(false);
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // clipboard indisponible : le champ reste sélectionnable manuellement.
-    }
-  }
+  const [customSource, setCustomSource] = useState("");
+  const trackedSource = customSource.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+  const trackedLink = link && trackedSource ? `${link}?src=${trackedSource}` : "";
 
   async function saveSlug() {
     setSavingSlug(true);
     setSlugError(null);
-    setSlugSaved(false);
     try {
       const res = await fetch("/api/slug", {
         method: "PUT",
@@ -250,8 +522,7 @@ function ChatLinkTab({ creator, onChanged }: { creator: Creator; onChanged: () =
         setSlugError(json.error || "Erreur lors de la mise à jour du lien.");
         return;
       }
-      setSlugSaved(true);
-      setTimeout(() => setSlugSaved(false), 2000);
+      toast("Lien mis à jour");
       onChanged();
     } finally {
       setSavingSlug(false);
@@ -259,66 +530,112 @@ function ChatLinkTab({ creator, onChanged }: { creator: Creator; onChanged: () =
   }
 
   return (
-    <div className="space-y-6 max-w-xl">
-      <div>
-        <h2 className="text-lg font-medium mb-1">Chat en ligne</h2>
-        <p className="text-sm text-muted">
-          C&apos;est votre canal principal, actif immédiatement — pas besoin de
-          Telegram. Partagez ce lien (bio Instagram, Linktree, TikTok...) :
-          votre communauté discute directement avec votre bot sur cette page,
-          et découvre vos paliers dans l&apos;ordre.
-        </p>
-      </div>
+    <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
+      <div className="space-y-6 max-w-xl">
+        <div>
+          <h2 className="text-lg font-medium mb-1">Chat en ligne</h2>
+          <p className="text-sm text-muted">
+            C&apos;est votre canal principal, actif immédiatement — pas besoin de
+            Telegram. Partagez ce lien (bio Instagram, Linktree, TikTok...) :
+            votre communauté discute directement avec votre bot sur cette page,
+            et découvre vos paliers dans l&apos;ordre.
+          </p>
+        </div>
 
-      <div className="card p-5 space-y-4">
-        <label className="block">
-          <span className="block text-sm text-muted mb-1.5">Votre lien</span>
+        <div className="card p-5 space-y-4">
+          <label className="block">
+            <span className="block text-sm text-muted mb-1.5">Votre lien</span>
+            <div className="flex items-center gap-2">
+              <input className="input font-mono text-sm" value={link} readOnly onFocus={(e) => e.target.select()} />
+              <CopyButton value={link} />
+            </div>
+          </label>
+          {link && (
+            <a href={link} target="_blank" rel="noreferrer" className="text-sm underline underline-offset-4 text-muted hover:text-foreground transition">
+              Ouvrir un aperçu du chat →
+            </a>
+          )}
+        </div>
+
+        <div className="card p-5 space-y-3">
+          <p className="text-sm font-medium">Personnaliser le lien</p>
+          <p className="text-xs text-muted">
+            Choisissez un identifiant court et mémorisable (lettres, chiffres, tirets).
+            L&apos;ancien lien continue de fonctionner si vous le changez.
+          </p>
           <div className="flex items-center gap-2">
-            <input className="input font-mono text-sm" value={link} readOnly onFocus={(e) => e.target.select()} />
+            <span className="text-sm text-muted font-mono whitespace-nowrap">{origin}/c/</span>
+            <input
+              className="input font-mono text-sm"
+              value={slug}
+              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              placeholder="luna"
+            />
             <button
-              onClick={copy}
-              className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white shrink-0"
+              onClick={saveSlug}
+              disabled={savingSlug || !slug || slug === creator.slug}
+              className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60 shrink-0"
             >
-              {copied ? "Copié !" : "Copier"}
+              {savingSlug ? "..." : "Valider"}
             </button>
           </div>
-        </label>
-        {link && (
-          <a href={link} target="_blank" rel="noreferrer" className="text-sm underline underline-offset-4 text-muted hover:text-foreground transition">
-            Ouvrir un aperçu du chat →
-          </a>
-        )}
-      </div>
-
-      <div className="card p-5 space-y-3">
-        <p className="text-sm font-medium">Personnaliser le lien</p>
-        <p className="text-xs text-muted">
-          Choisissez un identifiant court et mémorisable (lettres, chiffres, tirets).
-          L&apos;ancien lien continue de fonctionner si vous le changez.
-        </p>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted font-mono whitespace-nowrap">{origin}/c/</span>
-          <input
-            className="input font-mono text-sm"
-            value={slug}
-            onChange={(e) => setSlug(e.target.value.toLowerCase())}
-            placeholder="luna"
-          />
-          <button
-            onClick={saveSlug}
-            disabled={savingSlug || !slug || slug === creator.slug}
-            className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60 shrink-0"
-          >
-            {savingSlug ? "..." : slugSaved ? "✓" : "Valider"}
-          </button>
+          {slugError && <p className="text-sm text-red-400">{slugError}</p>}
         </div>
-        {slugError && <p className="text-sm text-red-400">{slugError}</p>}
+
+        <div className="card p-5 space-y-3">
+          <p className="text-sm font-medium">Liens trackés</p>
+          <p className="text-xs text-muted">
+            Ajoutez un tag à votre lien pour savoir d&apos;où viennent vos visites
+            (bio Instagram, story, post...) — retrouvez la répartition dans
+            l&apos;onglet Statistiques.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_LINK_SOURCES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setCustomSource(s.value)}
+                className={`rounded-full px-4 py-1.5 text-xs font-medium border transition ${
+                  trackedSource === s.value
+                    ? "border-accent text-foreground"
+                    : "border-border text-muted hover:border-muted"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              className="input font-mono text-sm"
+              value={customSource}
+              onChange={(e) => setCustomSource(e.target.value)}
+              placeholder="ou un tag personnalisé (ex. tiktok)"
+            />
+          </div>
+          {trackedLink && (
+            <div className="flex items-center gap-2">
+              <input className="input font-mono text-xs" value={trackedLink} readOnly onFocus={(e) => e.target.select()} />
+              <CopyButton value={trackedLink} />
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-muted">
+          Astuce : configurez d&apos;abord votre personnalité et vos paliers
+          (onglets suivants) avant de partager le lien.
+        </p>
       </div>
 
-      <p className="text-xs text-muted">
-        Astuce : configurez d&apos;abord votre personnalité et vos paliers
-        (onglets suivants) avant de partager le lien.
-      </p>
+      <div className="lg:sticky lg:top-6">
+        <p className="text-xs text-muted mb-2">Aperçu de ce que voit votre communauté</p>
+        <BotPreview
+          tone={creator.personaTone}
+          name={creator.displayName}
+          avatarUrl={creator.avatarUrl}
+          accentColor={creator.accentColor}
+        />
+      </div>
     </div>
   );
 }
@@ -326,9 +643,11 @@ function ChatLinkTab({ creator, onChanged }: { creator: Creator; onChanged: () =
 // ------------------------------------------------------------------
 
 function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => void }) {
+  const toast = useToast();
   const [displayName, setDisplayName] = useState(creator.displayName);
   const [tone, setTone] = useState(creator.personaTone);
   const [bio, setBio] = useState(creator.personaBio);
+  const [language, setLanguage] = useState(creator.personaLanguage || "fr");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -357,13 +676,14 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
       const res = await fetch("/api/persona", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ displayName, tone, bio }),
+        body: JSON.stringify({ displayName, tone, bio, language }),
       });
       const json = await res.json();
       if (!res.ok) {
         setError(json.error || "Erreur lors de l'enregistrement.");
         return;
       }
+      toast("Personnalité enregistrée");
       onSaved();
     } finally {
       setSaving(false);
@@ -384,6 +704,7 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
         setProfileError(json.error || "Erreur lors de l'enregistrement.");
         return;
       }
+      toast("Apparence enregistrée");
       onSaved();
     } finally {
       setSavingProfile(false);
@@ -391,161 +712,194 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
   }
 
   return (
-    <div className="space-y-8 max-w-xl">
-      <div>
-        <h2 className="text-lg font-medium mb-1">Personnalité du bot</h2>
-        <p className="text-sm text-muted">
-          Ces réglages définissent le ton de toutes les conversations — deux règles de
-          sécurité restent toujours actives quel que soit le ton choisi (honnêteté si
-          on lui demande sincèrement si c&apos;est une IA, aucun contenu explicite généré).
-        </p>
-      </div>
-
-      <label className="block">
-        <span className="block text-sm text-muted mb-1.5">Prénom affiché</span>
-        <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-      </label>
-
-      <div>
-        <span className="block text-sm text-muted mb-2">Ton</span>
-        <div className="grid sm:grid-cols-3 gap-3">
-          {TONES.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => setTone(t.value)}
-              className={`card p-4 text-left transition ${
-                tone === t.value ? "border-accent" : "hover:border-muted"
-              }`}
-            >
-              <span className="text-sm font-medium">{t.label}</span>
-            </button>
-          ))}
+    <div className="grid lg:grid-cols-[1fr_320px] gap-8 items-start">
+      <div className="space-y-8 max-w-xl">
+        <div>
+          <h2 className="text-lg font-medium mb-1">Personnalité du bot</h2>
+          <p className="text-sm text-muted">
+            Ces réglages définissent le ton de toutes les conversations — deux règles de
+            sécurité restent toujours actives quel que soit le ton choisi (honnêteté si
+            on lui demande sincèrement si c&apos;est une IA, aucun contenu explicite généré).
+          </p>
         </div>
-      </div>
 
-      <label className="block">
-        <span className="block text-sm text-muted mb-1.5">
-          Bio / contexte (optionnel, visible seulement par le bot)
-        </span>
-        <textarea
-          className="input min-h-28"
-          value={bio}
-          onChange={(e) => setBio(e.target.value)}
-          placeholder="Centres d'intérêt, ce qui te caractérise, ce que le bot doit savoir sur toi..."
-        />
-      </label>
+        <label className="block">
+          <span className="block text-sm text-muted mb-1.5">Prénom affiché</span>
+          <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        </label>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+        <div>
+          <span className="block text-sm text-muted mb-2">Ton</span>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {TONES.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => setTone(t.value)}
+                className={`card p-4 text-left transition ${
+                  tone === t.value ? "border-accent" : "hover:border-muted"
+                }`}
+              >
+                <span className="text-sm font-medium">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-      <button
-        onClick={save}
-        disabled={saving}
-        className="gradient-btn rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-60"
-      >
-        {saving ? "Enregistrement..." : "Enregistrer"}
-      </button>
+        <div>
+          <span className="block text-sm text-muted mb-2">Langue du bot</span>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {LANGUAGES.map((l) => (
+              <button
+                key={l.value}
+                onClick={() => setLanguage(l.value)}
+                className={`card p-4 text-left transition ${
+                  language === l.value ? "border-accent" : "hover:border-muted"
+                }`}
+              >
+                <span className="text-sm font-medium">{l.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted mt-2">
+            Le bot répond dans cette langue par défaut — s&apos;il reçoit un message
+            dans une autre langue, il peut naturellement basculer pour répondre
+            dans la langue de la personne.
+          </p>
+        </div>
 
-      <div className="border-t border-border pt-8">
-        <h2 className="text-lg font-medium mb-1">Apparence</h2>
-        <p className="text-sm text-muted mb-6">
-          Optionnel — personnalise la page de chat que tes abonnés voient.
-        </p>
-
-        <div className="space-y-6">
-          <label className="block">
-            <span className="block text-sm text-muted mb-1.5">
-              URL de photo de profil (optionnel)
-            </span>
-            <input
-              className="input"
-              value={avatarUrl}
-              onChange={(e) => setAvatarUrl(e.target.value)}
-              placeholder="https://..."
-            />
-            <span className="block text-xs text-muted mt-1.5">
-              Lien direct vers une image déjà hébergée ailleurs (Instagram, Twitter, etc.) —
-              pas d&apos;upload de fichier ici.
-            </span>
-          </label>
-
-          <label className="block">
-            <span className="block text-sm text-muted mb-1.5">Couleur d&apos;accent (optionnel)</span>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                value={/^#([0-9a-fA-F]{6})$/.test(accentColor) ? accentColor : "#ff4d8d"}
-                onChange={(e) => setAccentColor(e.target.value)}
-                className="h-10 w-14 rounded-lg border border-border bg-transparent cursor-pointer"
-              />
-              <input
-                className="input flex-1"
-                value={accentColor}
-                onChange={(e) => setAccentColor(e.target.value)}
-                placeholder="#ff4d8d"
-              />
-            </div>
-          </label>
-
-          <div>
-            <span className="block text-sm text-muted mb-1.5">
-              Galerie photo (optionnel, jusqu&apos;à 8 photos)
-            </span>
-            {galleryUrls.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                {galleryUrls.map((url) => (
-                  <div key={url} className="relative group">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- URL externe arbitraire */}
-                    <img
-                      src={url}
-                      alt=""
-                      className="w-16 h-16 rounded-lg object-cover border border-border"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeGalleryUrl(url)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-surface text-xs border border-border flex items-center justify-center text-muted hover:text-red-400 transition"
-                      aria-label="Retirer cette photo"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {galleryUrls.length < 8 && (
-              <div className="flex items-center gap-2">
-                <input
-                  className="input flex-1"
-                  value={newGalleryUrl}
-                  onChange={(e) => setNewGalleryUrl(e.target.value)}
-                  placeholder="https://..."
-                />
-                <button
-                  type="button"
-                  onClick={addGalleryUrl}
-                  disabled={!newGalleryUrl.trim()}
-                  className="rounded-full px-4 py-2.5 text-sm font-medium border border-border hover:border-muted transition disabled:opacity-60 shrink-0"
-                >
-                  Ajouter
-                </button>
-              </div>
-            )}
-            <span className="block text-xs text-muted mt-1.5">
-              Affichée en haut de ta page de chat publique — mêmes liens directs
-              hébergés ailleurs que la photo de profil.
+        <label className="block">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm text-muted">Bio / contexte (optionnel, visible seulement par le bot)</span>
+            <span className={`text-xs ${bio.length > BIO_MAX_LENGTH * 0.9 ? "text-[var(--warning)]" : "text-muted"}`}>
+              {bio.length}/{BIO_MAX_LENGTH}
             </span>
           </div>
+          <textarea
+            className="input min-h-28"
+            value={bio}
+            maxLength={BIO_MAX_LENGTH}
+            onChange={(e) => setBio(e.target.value)}
+            placeholder="Centres d'intérêt, ce qui te caractérise, ce que le bot doit savoir sur toi..."
+          />
+        </label>
 
-          {profileError && <p className="text-sm text-red-400">{profileError}</p>}
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
-          <button
-            onClick={saveProfile}
-            disabled={savingProfile}
-            className="gradient-btn rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {savingProfile ? "Enregistrement..." : "Enregistrer l'apparence"}
-          </button>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="gradient-btn rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+        >
+          {saving ? "Enregistrement..." : "Enregistrer"}
+        </button>
+
+        <div className="border-t border-border pt-8">
+          <h2 className="text-lg font-medium mb-1">Apparence</h2>
+          <p className="text-sm text-muted mb-6">
+            Optionnel — personnalise la page de chat que tes abonnés voient.
+          </p>
+
+          <div className="space-y-6">
+            <label className="block">
+              <span className="block text-sm text-muted mb-1.5">
+                URL de photo de profil (optionnel)
+              </span>
+              <input
+                className="input"
+                value={avatarUrl}
+                onChange={(e) => setAvatarUrl(e.target.value)}
+                placeholder="https://..."
+              />
+              <span className="block text-xs text-muted mt-1.5">
+                Lien direct vers une image déjà hébergée ailleurs (Instagram, Twitter, etc.) —
+                pas d&apos;upload de fichier ici.
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="block text-sm text-muted mb-1.5">Couleur d&apos;accent (optionnel)</span>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={/^#([0-9a-fA-F]{6})$/.test(accentColor) ? accentColor : "#ff4d8d"}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  className="h-10 w-14 rounded-lg border border-border bg-transparent cursor-pointer"
+                />
+                <input
+                  className="input flex-1"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  placeholder="#ff4d8d"
+                />
+              </div>
+            </label>
+
+            <div>
+              <span className="block text-sm text-muted mb-1.5">
+                Galerie photo (optionnel, jusqu&apos;à 8 photos)
+              </span>
+              {galleryUrls.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {galleryUrls.map((url) => (
+                    <div key={url} className="relative group">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- URL externe arbitraire */}
+                      <img
+                        src={url}
+                        alt=""
+                        className="w-16 h-16 rounded-lg object-cover border border-border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeGalleryUrl(url)}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-surface text-xs border border-border flex items-center justify-center text-muted hover:text-red-400 transition"
+                        aria-label="Retirer cette photo"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {galleryUrls.length < 8 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input flex-1"
+                    value={newGalleryUrl}
+                    onChange={(e) => setNewGalleryUrl(e.target.value)}
+                    placeholder="https://..."
+                  />
+                  <button
+                    type="button"
+                    onClick={addGalleryUrl}
+                    disabled={!newGalleryUrl.trim()}
+                    className="rounded-full px-4 py-2.5 text-sm font-medium border border-border hover:border-muted transition disabled:opacity-60 shrink-0"
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              )}
+              <span className="block text-xs text-muted mt-1.5">
+                Affichée en haut de ta page de chat publique — mêmes liens directs
+                hébergés ailleurs que la photo de profil.
+              </span>
+            </div>
+
+            {profileError && <p className="text-sm text-red-400">{profileError}</p>}
+
+            <button
+              onClick={saveProfile}
+              disabled={savingProfile}
+              className="gradient-btn rounded-full px-6 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {savingProfile ? "Enregistrement..." : "Enregistrer l'apparence"}
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div className="lg:sticky lg:top-6">
+        <p className="text-xs text-muted mb-2">Aperçu en direct</p>
+        <BotPreview tone={tone} name={displayName} avatarUrl={avatarUrl} accentColor={accentColor} />
       </div>
     </div>
   );
@@ -554,39 +908,102 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
 // ------------------------------------------------------------------
 
 function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }) {
+  const toast = useToast();
+  const { confirm, modal } = useConfirm();
+
   const [label, setLabel] = useState("");
   const [priceEuros, setPriceEuros] = useState("");
   const [url, setUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editPriceEuros, setEditPriceEuros] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const [reorderingId, setReorderingId] = useState<string | null>(null);
+
+  const sorted = tiers.slice().sort((a, b) => a.order - b.order);
   const nextOrder = tiers.length ? Math.max(...tiers.map((t) => t.order)) + 1 : 1;
+
+  async function upsert(body: { order: number; label: string; priceEuros: number; url: string }) {
+    const res = await fetch("/api/tiers", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Erreur lors de l'enregistrement.");
+    return json;
+  }
 
   async function addTier() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/tiers", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ order: nextOrder, label, priceEuros: Number(priceEuros), url }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error || "Erreur lors de l'ajout.");
-        return;
-      }
+      await upsert({ order: nextOrder, label, priceEuros: Number(priceEuros), url });
       setLabel("");
       setPriceEuros("");
       setUrl("");
+      toast("Palier ajouté");
       onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors de l'ajout.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function removeTier(id: string) {
-    await fetch(`/api/tiers/${id}`, { method: "DELETE" });
+  function startEdit(t: Tier) {
+    setEditingId(t.id);
+    setEditLabel(t.label);
+    setEditPriceEuros(String(t.priceCents / 100));
+    setEditUrl(t.url);
+    setEditError(null);
+  }
+
+  async function saveEdit(t: Tier) {
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      await upsert({ order: t.order, label: editLabel, priceEuros: Number(editPriceEuros), url: editUrl });
+      toast("Palier mis à jour");
+      setEditingId(null);
+      onChanged();
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Erreur lors de l'enregistrement.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function moveTier(t: Tier, dir: -1 | 1) {
+    const idx = sorted.findIndex((x) => x.id === t.id);
+    const other = sorted[idx + dir];
+    if (!other) return;
+    setReorderingId(t.id);
+    try {
+      await Promise.all([
+        upsert({ order: t.order, label: other.label, priceEuros: other.priceCents / 100, url: other.url }),
+        upsert({ order: other.order, label: t.label, priceEuros: t.priceCents / 100, url: t.url }),
+      ]);
+      toast("Ordre mis à jour");
+      onChanged();
+    } catch {
+      toast("Erreur lors du réordonnancement.", "error");
+    } finally {
+      setReorderingId(null);
+    }
+  }
+
+  async function removeTier(t: Tier) {
+    const ok = await confirm(`Supprimer le palier « ${t.label} » ?`, "Cette action est définitive.");
+    if (!ok) return;
+    await fetch(`/api/tiers/${t.id}`, { method: "DELETE" });
+    toast("Palier supprimé");
     onChanged();
   }
 
@@ -600,33 +1017,105 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
         </p>
       </div>
 
-      <ul className="space-y-3">
-        {tiers
-          .slice()
-          .sort((a, b) => a.order - b.order)
-          .map((t) => (
-            <li key={t.id} className="card p-4 flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
-                  Palier {t.order} — {t.label}
-                </p>
-                <p className="text-xs text-muted truncate">{t.url}</p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="text-sm gradient-text font-medium">{eur(t.priceCents)}</span>
-                <button
-                  onClick={() => removeTier(t.id)}
-                  className="text-xs text-muted hover:text-red-400 transition"
-                >
-                  Supprimer
-                </button>
-              </div>
+      {sorted.length === 0 ? (
+        <EmptyState icon="🔗" title="Aucun palier pour l'instant." hint="Ajoutez votre premier palier ci-dessous." />
+      ) : (
+        <ul className="space-y-3">
+          {sorted.map((t, idx) => (
+            <li key={t.id} className="card p-4">
+              {editingId === t.id ? (
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className="block text-xs text-muted mb-1">Libellé</span>
+                    <input className="input" value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="block text-xs text-muted mb-1">Prix (€)</span>
+                      <input
+                        className="input"
+                        type="number"
+                        min="0.5"
+                        step="0.5"
+                        value={editPriceEuros}
+                        onChange={(e) => setEditPriceEuros(e.target.value)}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-xs text-muted mb-1">Lien de paiement</span>
+                      <input className="input" value={editUrl} onChange={(e) => setEditUrl(e.target.value)} />
+                    </label>
+                  </div>
+                  {editError && <p className="text-sm text-red-400">{editError}</p>}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => saveEdit(t)}
+                      disabled={savingEdit || !editLabel || !editPriceEuros || !editUrl}
+                      className="gradient-btn rounded-full px-5 py-2 text-sm font-medium text-white disabled:opacity-60"
+                    >
+                      {savingEdit ? "..." : "Enregistrer"}
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="text-sm text-muted hover:text-foreground transition"
+                    >
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-col -space-y-1">
+                      <button
+                        onClick={() => moveTier(t, -1)}
+                        disabled={idx === 0 || reorderingId !== null}
+                        aria-label="Monter ce palier"
+                        className="text-muted hover:text-foreground disabled:opacity-25 disabled:cursor-not-allowed leading-none text-[10px] px-1 py-0.5"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        onClick={() => moveTier(t, 1)}
+                        disabled={idx === sorted.length - 1 || reorderingId !== null}
+                        aria-label="Descendre ce palier"
+                        className="text-muted hover:text-foreground disabled:opacity-25 disabled:cursor-not-allowed leading-none text-[10px] px-1 py-0.5"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">
+                      Palier {t.order} — {t.label}
+                    </p>
+                    <p className="text-xs text-muted truncate">{t.url}</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-sm gradient-text font-medium">{eur(t.priceCents)}</span>
+                    <CopyButton
+                      value={t.url}
+                      className="text-xs text-muted hover:text-foreground transition rounded-full border border-border hover:border-muted px-3 py-1.5"
+                    />
+                    <button
+                      onClick={() => startEdit(t)}
+                      className="text-xs text-muted hover:text-foreground transition"
+                    >
+                      Modifier
+                    </button>
+                    <button
+                      onClick={() => removeTier(t)}
+                      className="text-xs text-muted hover:text-red-400 transition"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
-        {tiers.length === 0 && (
-          <p className="text-sm text-muted">Aucun palier pour l&apos;instant.</p>
-        )}
-      </ul>
+        </ul>
+      )}
 
       <div className="card p-5 space-y-4">
         <p className="text-sm font-medium">Ajouter le palier {nextOrder}</p>
@@ -661,6 +1150,7 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
           {saving ? "Ajout..." : "Ajouter le palier"}
         </button>
       </div>
+      {modal}
     </div>
   );
 }
@@ -668,10 +1158,13 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
 // ------------------------------------------------------------------
 
 function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () => void }) {
+  const toast = useToast();
+  const { confirm, modal } = useConfirm();
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savingRelance, setSavingRelance] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   async function toggleRelance() {
     setSavingRelance(true);
@@ -681,6 +1174,7 @@ function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () =
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ enabled: !creator.relanceEnabled }),
       });
+      toast(creator.relanceEnabled ? "Relances désactivées" : "Relances activées");
       onChanged();
     } finally {
       setSavingRelance(false);
@@ -702,6 +1196,7 @@ function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () =
         return;
       }
       setToken("");
+      toast("Bot Telegram connecté");
       onChanged();
     } finally {
       setSaving(false);
@@ -709,46 +1204,87 @@ function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () =
   }
 
   async function disconnect() {
+    const ok = await confirm("Déconnecter votre bot Telegram ?", "Votre chat en ligne continuera de fonctionner normalement.");
+    if (!ok) return;
     await fetch("/api/telegram/connect", { method: "DELETE" });
+    toast("Bot Telegram déconnecté");
     onChanged();
+  }
+
+  async function testConnection() {
+    setTesting(true);
+    try {
+      const res = await fetch("/api/telegram/test", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) {
+        toast(json.error || "Le test a échoué.", "error");
+        return;
+      }
+      toast(`Connexion OK — @${json.username}`);
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
     <div className="space-y-6 max-w-xl">
-      <div>
-        <h2 className="text-lg font-medium mb-1">Connexion Telegram</h2>
-        <p className="text-sm text-muted">
-          Optionnel — votre chat en ligne (onglet précédent) fonctionne déjà
-          sans ça. Connectez Telegram en plus si vous voulez aussi être
-          jointe depuis l&apos;app Telegram. Créez un bot en 2 minutes via{" "}
-          <a
-            href="https://t.me/BotFather"
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-4"
-          >
-            @BotFather
-          </a>{" "}
-          sur Telegram (<code className="text-xs">/newbot</code>), puis collez le token
-          ici. Personne d&apos;autre que vous ne le voit.
-        </p>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-medium mb-1">Connexion Telegram</h2>
+          <p className="text-sm text-muted">
+            Optionnel — votre chat en ligne (onglet précédent) fonctionne déjà
+            sans ça. Connectez Telegram en plus si vous voulez aussi être
+            jointe depuis l&apos;app Telegram.
+          </p>
+        </div>
+        <StatusPill tone={creator.telegramWebhookReady ? "success" : "neutral"}>
+          {creator.telegramWebhookReady ? "Connecté" : "Non connecté"}
+        </StatusPill>
       </div>
 
+      {!creator.telegramWebhookReady && (
+        <ol className="space-y-2 text-sm text-muted list-none">
+          <li className="flex gap-2.5">
+            <span className="shrink-0 w-5 h-5 rounded-full bg-surface-2 text-xs flex items-center justify-center text-foreground">1</span>
+            Ouvrez{" "}
+            <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="underline underline-offset-4">
+              @BotFather
+            </a>{" "}
+            sur Telegram.
+          </li>
+          <li className="flex gap-2.5">
+            <span className="shrink-0 w-5 h-5 rounded-full bg-surface-2 text-xs flex items-center justify-center text-foreground">2</span>
+            Envoyez <code className="text-xs">/newbot</code> et suivez les instructions (nom, identifiant).
+          </li>
+          <li className="flex gap-2.5">
+            <span className="shrink-0 w-5 h-5 rounded-full bg-surface-2 text-xs flex items-center justify-center text-foreground">3</span>
+            Copiez le token fourni et collez-le ci-dessous. Personne d&apos;autre que vous ne le voit.
+          </li>
+        </ol>
+      )}
+
       {creator.telegramWebhookReady ? (
-        <div className="card p-5 flex items-center justify-between">
+        <div className="card p-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium">
-              Connecté — @{creator.telegramBotUsername}
-            </p>
+            <p className="text-sm font-medium">@{creator.telegramBotUsername}</p>
             <p className="text-xs text-muted mt-1">
               Partagez le lien{" "}
               <code className="text-xs">t.me/{creator.telegramBotUsername}</code> avec
               votre communauté.
             </p>
           </div>
-          <button onClick={disconnect} className="text-sm text-muted hover:text-red-400 transition">
-            Déconnecter
-          </button>
+          <div className="flex items-center gap-4 shrink-0">
+            <button
+              onClick={testConnection}
+              disabled={testing}
+              className="text-sm text-muted hover:text-foreground transition disabled:opacity-60"
+            >
+              {testing ? "Test..." : "Tester la connexion"}
+            </button>
+            <button onClick={disconnect} className="text-sm text-muted hover:text-red-400 transition">
+              Déconnecter
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -801,71 +1337,179 @@ function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () =
           </button>
         </div>
       )}
+      {modal}
     </div>
   );
 }
 
 // ------------------------------------------------------------------
 
-function StatsTab({ stats, tiers }: { stats: Stats | null; tiers: Tier[] }) {
+const PERIODS = [7, 14, 30, 90] as const;
+
+function StatsTab({ stats: initialStats, tiers, sales }: { stats: Stats | null; tiers: Tier[]; sales: Sale[] }) {
+  const [days, setDays] = useState<(typeof PERIODS)[number]>(14);
+  // Le chargement par défaut (14j, via /api/me) arrive déjà avec le reste du
+  // dashboard — on ne refetch que si la créatrice choisit une autre période,
+  // et on ne duplique jamais `initialStats` dans un state local : `stats`
+  // plus bas est calculé directement plutôt que "miroité" par un effet.
+  const [fetchedStats, setFetchedStats] = useState<Stats | null>(null);
+  const [loadingPeriod, setLoadingPeriod] = useState(false);
+
+  useEffect(() => {
+    if (days === 14) return;
+    let cancelled = false;
+    setLoadingPeriod(true);
+    fetch(`/api/stats?days=${days}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setFetchedStats(json.stats);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPeriod(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [days]);
+
+  const stats = days === 14 ? initialStats : fetchedStats;
   if (!stats) return null;
   const totalClicks = Object.values(stats.clicksByTier).reduce((a, b) => a + b, 0);
-  const clicks14d = (stats.clicksByDay || []).reduce((a, d) => a + d.clicks, 0);
+  const clicksWindow = (stats.clicksByDay || []).reduce((a, d) => a + d.clicks, 0);
+
+  const clicksByDay = stats.clicksByDay || [];
+  const salesByDay = clicksByDay.map((d) => {
+    const cents = sales
+      .filter((s) => s.declaredAt.slice(0, 10) === d.day)
+      .reduce((sum, s) => sum + s.amountCents, 0);
+    return { day: d.day, value: cents };
+  });
+  const salesInWindow = clicksByDay.length
+    ? sales.filter((s) => s.declaredAt.slice(0, 10) >= clicksByDay[0].day)
+    : [];
 
   return (
     <div className="space-y-8 max-w-2xl">
-      <div>
-        <h2 className="text-lg font-medium mb-1">Statistiques</h2>
-        <p className="text-sm text-muted">
-          Clics enregistrés quand quelqu&apos;un clique vraiment sur un de vos liens
-          (pas seulement quand le bot le propose).
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="card p-5">
-          <p className="text-xs text-muted">Total des clics</p>
-          <p className="text-2xl font-semibold mt-1">{totalClicks}</p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-lg font-medium mb-1">Statistiques</h2>
+          <p className="text-sm text-muted">
+            Clics enregistrés quand quelqu&apos;un clique vraiment sur un de vos liens
+            (pas seulement quand le bot le propose).
+          </p>
         </div>
-        <div className="card p-5">
-          <p className="text-xs text-muted">Sur les 14 derniers jours</p>
-          <p className="text-2xl font-semibold mt-1">{clicks14d}</p>
+        <div className="flex items-center gap-1 rounded-full border border-border p-1 shrink-0">
+          {PERIODS.map((p) => (
+            <button
+              key={p}
+              onClick={() => setDays(p)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                days === p ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
+              }`}
+            >
+              {p}j
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="card p-5">
-        <p className="text-sm font-medium mb-4">Clics par jour (14 derniers jours)</p>
-        <ClicksChart data={stats.clicksByDay || []} />
-      </div>
+      <div className={`space-y-8 transition-opacity ${loadingPeriod ? "opacity-50" : ""}`}>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="card p-5">
+            <p className="text-xs text-muted">Total des clics</p>
+            <p className="text-2xl font-semibold mt-1">{totalClicks}</p>
+          </div>
+          <div className="card p-5">
+            <p className="text-xs text-muted">Sur les {days} derniers jours</p>
+            <p className="text-2xl font-semibold mt-1">{clicksWindow}</p>
+          </div>
+        </div>
 
-      <div>
-        <p className="text-sm font-medium mb-3">Par palier</p>
-        <ul className="space-y-3">
-          {tiers
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((t) => {
-              const clicks = stats.clicksByTier[t.id] || 0;
-              const pct = totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0;
-              return (
-                <li key={t.id} className="card p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm">
-                      Palier {t.order} — {t.label}
-                    </span>
-                    <span className="text-sm font-medium">{clicks} clic(s)</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
-                    <div
-                      className="h-full gradient-btn rounded-full transition-[width]"
-                      style={{ width: `${Math.max(pct, clicks > 0 ? 4 : 0)}%` }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          {tiers.length === 0 && <p className="text-sm text-muted">Ajoutez un palier pour voir des stats.</p>}
-        </ul>
+        <div className="card p-5">
+          <p className="text-sm font-medium mb-4">Clics par jour ({days} derniers jours)</p>
+          <ClicksChart data={clicksByDay} />
+        </div>
+
+        <div className="card p-5">
+          <p className="text-sm font-medium mb-4">Revenus déclarés par jour ({days} derniers jours)</p>
+          <RevenueTrendChart data={salesByDay} />
+        </div>
+
+        <div className="card p-5">
+          <p className="text-sm font-medium mb-4">Entonnoir clics → ventes</p>
+          <ConversionFunnel clicks={clicksWindow} sales={salesInWindow.length} />
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <p className="text-xs text-muted">Nouveaux fans</p>
+            <p className="text-2xl font-semibold mt-1">{stats.fanSegmentation?.newFans ?? 0}</p>
+            <p className="text-xs text-muted mt-1">Premier message sur les {days} derniers jours</p>
+          </div>
+          <div className="card p-5">
+            <p className="text-xs text-muted">Fans récurrents</p>
+            <p className="text-2xl font-semibold mt-1">{stats.fanSegmentation?.returningFans ?? 0}</p>
+            <p className="text-xs text-muted mt-1">Actifs, mais déjà écrit avant cette période</p>
+          </div>
+        </div>
+
+        {stats.visitsBySource && stats.visitsBySource.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-3">Sources de trafic ({days} derniers jours)</p>
+            <ul className="space-y-3">
+              {(() => {
+                const totalVisits = stats.visitsBySource.reduce((a, s) => a + s.visits, 0);
+                return stats.visitsBySource.map((s) => {
+                  const pct = totalVisits > 0 ? Math.round((s.visits / totalVisits) * 100) : 0;
+                  return (
+                    <li key={s.source} className="card p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm capitalize">{s.source}</span>
+                        <span className="text-sm font-medium">{s.visits} visite(s)</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
+                        <div
+                          className="h-full gradient-btn rounded-full transition-[width]"
+                          style={{ width: `${Math.max(pct, s.visits > 0 ? 4 : 0)}%` }}
+                        />
+                      </div>
+                    </li>
+                  );
+                });
+              })()}
+            </ul>
+          </div>
+        )}
+
+        <div>
+          <p className="text-sm font-medium mb-3">Par palier</p>
+          <ul className="space-y-3">
+            {tiers
+              .slice()
+              .sort((a, b) => a.order - b.order)
+              .map((t) => {
+                const clicks = stats.clicksByTier[t.id] || 0;
+                const pct = totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0;
+                return (
+                  <li key={t.id} className="card p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm">
+                        Palier {t.order} — {t.label}
+                      </span>
+                      <span className="text-sm font-medium">{clicks} clic(s)</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
+                      <div
+                        className="h-full gradient-btn rounded-full transition-[width]"
+                        style={{ width: `${Math.max(pct, clicks > 0 ? 4 : 0)}%` }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            {tiers.length === 0 && <p className="text-sm text-muted">Ajoutez un palier pour voir des stats.</p>}
+          </ul>
+        </div>
       </div>
     </div>
   );
@@ -873,7 +1517,9 @@ function StatsTab({ stats, tiers }: { stats: Stats | null; tiers: Tier[] }) {
 
 // Petit graphique en barres en SVG pur — pas de librairie de charts pour
 // quelques barres, ça alourdirait le bundle pour rien. `viewBox` fixe permet
-// un rendu net à n'importe quelle taille d'écran (voir width="100%").
+// un rendu net à n'importe quelle taille d'écran (voir width="100%"). Une
+// seule teinte (dégradé --accent → --accent-2) car ces barres encodent une
+// magnitude, pas des catégories — voir la référence dataviz du projet.
 function ClicksChart({ data }: { data: DailyClicks[] }) {
   if (data.length === 0) {
     return <p className="text-sm text-muted">Pas encore de données.</p>;
@@ -888,7 +1534,7 @@ function ClicksChart({ data }: { data: DailyClicks[] }) {
 
   return (
     <div>
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none" role="img" aria-label="Clics par jour sur les 14 derniers jours">
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none" role="img" aria-label="Clics par jour">
         <defs>
           <linearGradient id="clicksBarGradient" x1="0" y1="1" x2="0" y2="0">
             <stop offset="0%" stopColor="var(--accent)" />
@@ -927,32 +1573,126 @@ function ClicksChart({ data }: { data: DailyClicks[] }) {
   );
 }
 
+// Même anatomie que ClicksChart (une seule teinte séquentielle, survol via
+// <title>) appliquée aux revenus déclarés — même langage visuel pour deux
+// métriques de magnitude, plutôt qu'inventer un second style de graphique.
+function RevenueTrendChart({ data }: { data: { day: string; value: number }[] }) {
+  if (data.length === 0) {
+    return <p className="text-sm text-muted">Pas encore de données.</p>;
+  }
+  const hasAny = data.some((d) => d.value > 0);
+  if (!hasAny) {
+    return <p className="text-sm text-muted">Aucune vente déclarée sur cette période.</p>;
+  }
+
+  const width = 600;
+  const height = 140;
+  const padding = 4;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const barGap = 6;
+  const barWidth = (width - barGap * (data.length - 1)) / data.length;
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none" role="img" aria-label="Revenus déclarés par jour">
+        <defs>
+          <linearGradient id="revenueBarGradient" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor="var(--accent)" />
+            <stop offset="100%" stopColor="var(--accent-2)" />
+          </linearGradient>
+        </defs>
+        {data.map((d, i) => {
+          const barHeight = d.value > 0 ? Math.max(4, (d.value / max) * (height - padding * 2)) : 2;
+          const x = i * (barWidth + barGap);
+          const y = height - padding - barHeight;
+          return (
+            <rect
+              key={d.day}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={barHeight}
+              rx={2}
+              fill={d.value > 0 ? "url(#revenueBarGradient)" : "var(--border)"}
+            >
+              <title>
+                {new Date(d.day + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} —{" "}
+                {eur(d.value)}
+              </title>
+            </rect>
+          );
+        })}
+      </svg>
+      <div className="flex justify-between mt-2 text-[10px] text-muted">
+        <span>
+          {new Date(data[0].day + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+        </span>
+        <span>Aujourd&apos;hui</span>
+      </div>
+    </div>
+  );
+}
+
+function ConversionFunnel({ clicks, sales }: { clicks: number; sales: number }) {
+  const max = Math.max(clicks, sales, 1);
+  const rate = clicks > 0 ? Math.round((sales / clicks) * 100) : 0;
+  return (
+    <div className="space-y-4">
+      <FunnelRow label="Clics sur un palier" value={clicks} max={max} />
+      <FunnelRow label="Ventes déclarées" value={sales} max={max} />
+      <p className="text-xs text-muted">
+        Taux de conversion estimé : {rate}% — basé sur vos déclarations, pas un suivi
+        automatique des paiements.
+      </p>
+    </div>
+  );
+}
+
+function FunnelRow({ label, value, max }: { label: string; value: number; max: number }) {
+  const pct = max > 0 ? Math.max((value / max) * 100, value > 0 ? 4 : 0) : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5 text-sm">
+        <span className="text-muted">{label}</span>
+        <span className="font-medium">{value}</span>
+      </div>
+      <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
+        <div className="h-full gradient-btn rounded-full transition-[width]" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------
+
+const HISTORY_PERIODS = [
+  { value: "all", label: "Tout" },
+  { value: "7", label: "7 jours" },
+  { value: "30", label: "30 jours" },
+  { value: "90", label: "90 jours" },
+] as const;
 
 function BillingTab({
   stats,
   tiers,
+  sales,
+  onDeclared,
   onChanged,
 }: {
   stats: Stats | null;
   tiers: Tier[];
+  sales: Sale[];
+  onDeclared: () => void;
   onChanged: () => void;
 }) {
-  const [sales, setSales] = useState<Sale[]>([]);
+  const toast = useToast();
   const [tierId, setTierId] = useState(tiers[0]?.id || "");
   const [amountEuros, setAmountEuros] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadSales = useCallback(async () => {
-    const res = await fetch("/api/sales");
-    const json = await res.json();
-    setSales(json.sales || []);
-  }, []);
-
-  useEffect(() => {
-    loadSales();
-  }, [loadSales]);
+  const [filterTier, setFilterTier] = useState("all");
+  const [filterPeriod, setFilterPeriod] = useState<(typeof HISTORY_PERIODS)[number]["value"]>("all");
 
   async function declare() {
     if (!tierId) return;
@@ -970,12 +1710,25 @@ function BillingTab({
         return;
       }
       setAmountEuros("");
-      loadSales();
+      toast("Vente déclarée");
+      onDeclared();
       onChanged();
     } finally {
       setSaving(false);
     }
   }
+
+  const filteredSales = sales.filter((s) => {
+    if (filterTier !== "all" && s.tierId !== filterTier) return false;
+    if (filterPeriod !== "all") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - Number(filterPeriod));
+      if (new Date(s.declaredAt) < cutoff) return false;
+    }
+    return true;
+  });
+
+  const referralDiscountCount = Math.min(stats?.referralCount ?? 0, REFERRAL_DISCOUNT_CAP_COUNT);
 
   return (
     <div className="space-y-8 max-w-xl">
@@ -988,12 +1741,6 @@ function BillingTab({
           laquelle vous serez facturée mensuellement. Une intégration automatique
           est prévue une fois un processeur adapté au contenu adulte choisi.
         </p>
-        {stats && stats.referralCount > 0 && (
-          <p className="text-xs text-muted mt-2">
-            Taux déjà réduit grâce à {stats.referralCount} filleule(s) parrainée(s) — voir
-            l&apos;onglet Compte.
-          </p>
-        )}
       </div>
 
       {stats && (
@@ -1006,6 +1753,28 @@ function BillingTab({
             <p className="text-xs text-muted">Commission due</p>
             <p className="text-lg font-medium gradient-text">{eur(stats.commissionOwedCents)}</p>
           </div>
+        </div>
+      )}
+
+      {stats && (
+        <div className="card p-5 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">Réduction parrainage</span>
+            <span className="text-muted">
+              -{referralDiscountCount} pt{referralDiscountCount > 1 ? "s" : ""} / -{REFERRAL_DISCOUNT_CAP_COUNT} pts max
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
+            <div
+              className="h-full gradient-btn rounded-full transition-[width]"
+              style={{ width: `${(referralDiscountCount / REFERRAL_DISCOUNT_CAP_COUNT) * 100}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted">
+            {stats.referralCount > 0
+              ? `${stats.referralCount} créatrice(s) parrainée(s) — voir l'onglet Compte pour votre lien.`
+              : "Parrainez d'autres créatrices pour réduire votre commission — voir l'onglet Compte."}
+          </p>
         </div>
       )}
 
@@ -1043,7 +1812,7 @@ function BillingTab({
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <p className="text-sm font-medium">Historique</p>
           {sales.length > 0 && (
             <a
@@ -1054,8 +1823,37 @@ function BillingTab({
             </a>
           )}
         </div>
+
+        {sales.length > 0 && (
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <select
+              className="input !py-1.5 !text-xs w-auto"
+              value={filterTier}
+              onChange={(e) => setFilterTier(e.target.value)}
+            >
+              <option value="all">Tous les paliers</option>
+              {tiers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input !py-1.5 !text-xs w-auto"
+              value={filterPeriod}
+              onChange={(e) => setFilterPeriod(e.target.value as typeof filterPeriod)}
+            >
+              {HISTORY_PERIODS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <ul className="space-y-2">
-          {sales.map((s) => (
+          {filteredSales.map((s) => (
             <li key={s.id} className="card p-3 flex items-center justify-between text-sm">
               <span>{s.tierLabel}</span>
               <span className="text-muted">{new Date(s.declaredAt).toLocaleDateString("fr-FR")}</span>
@@ -1063,6 +1861,9 @@ function BillingTab({
             </li>
           ))}
           {sales.length === 0 && <p className="text-sm text-muted">Aucune vente déclarée.</p>}
+          {sales.length > 0 && filteredSales.length === 0 && (
+            <p className="text-sm text-muted">Aucune vente ne correspond à ces filtres.</p>
+          )}
         </ul>
       </div>
     </div>
@@ -1084,9 +1885,20 @@ function AccountTab({
     <div className="space-y-10 max-w-xl">
       <div>
         <h2 className="text-lg font-medium mb-1">Compte</h2>
-        <p className="text-sm text-muted">
-          Sécurité, parrainage et domaine personnalisé.
-        </p>
+        <p className="text-sm text-muted mb-4">Sécurité, parrainage et domaine personnalisé.</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <StatusPill tone={creator.totpEnabled ? "success" : "neutral"}>
+            2FA {creator.totpEnabled ? "activé" : "désactivé"}
+          </StatusPill>
+          <StatusPill tone={creator.telegramWebhookReady ? "success" : "neutral"}>
+            Telegram {creator.telegramWebhookReady ? "connecté" : "non connecté"}
+          </StatusPill>
+          {creator.customDomain && (
+            <StatusPill tone={creator.customDomainVerified ? "success" : "warning"}>
+              Domaine {creator.customDomainVerified ? "vérifié" : "en attente"}
+            </StatusPill>
+          )}
+        </div>
       </div>
 
       <ReferralSection creator={creator} referralCount={stats?.referralCount ?? null} />
@@ -1107,19 +1919,8 @@ function ReferralSection({
   creator: Creator;
   referralCount: number | null;
 }) {
-  const [copied, setCopied] = useState(false);
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const link = origin && creator.referralCode ? `${origin}/signup?ref=${creator.referralCode}` : "";
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // ignore
-    }
-  }
 
   return (
     <div>
@@ -1133,12 +1934,7 @@ function ReferralSection({
           <span className="block text-sm text-muted mb-1.5">Votre lien de parrainage</span>
           <div className="flex items-center gap-2">
             <input className="input font-mono text-sm" value={link} readOnly onFocus={(e) => e.target.select()} />
-            <button
-              onClick={copy}
-              className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white shrink-0"
-            >
-              {copied ? "Copié !" : "Copier"}
-            </button>
+            <CopyButton value={link} />
           </div>
         </label>
         <p className="text-sm text-muted">
@@ -1150,6 +1946,8 @@ function ReferralSection({
 }
 
 function TwoFactorSection({ creator, onChanged }: { creator: Creator; onChanged: () => void }) {
+  const toast = useToast();
+  const { confirm, modal } = useConfirm();
   const [enrolling, setEnrolling] = useState(false);
   const [secret, setSecret] = useState<string | null>(null);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
@@ -1194,6 +1992,7 @@ function TwoFactorSection({ creator, onChanged }: { creator: Creator; onChanged:
         return;
       }
       setBackupCodes(json.backupCodes);
+      toast("2FA activé");
       onChanged();
     } finally {
       setSaving(false);
@@ -1209,6 +2008,8 @@ function TwoFactorSection({ creator, onChanged }: { creator: Creator; onChanged:
   }
 
   async function disable() {
+    const ok = await confirm("Désactiver le 2FA ?", "Votre compte sera protégé uniquement par votre mot de passe.");
+    if (!ok) return;
     setError(null);
     setDisabling(true);
     try {
@@ -1223,6 +2024,7 @@ function TwoFactorSection({ creator, onChanged }: { creator: Creator; onChanged:
         return;
       }
       setDisableCode("");
+      toast("2FA désactivé");
       onChanged();
     } finally {
       setDisabling(false);
@@ -1332,11 +2134,14 @@ function TwoFactorSection({ creator, onChanged }: { creator: Creator; onChanged:
           {saving ? "..." : "Activer le 2FA"}
         </button>
       )}
+      {modal}
     </div>
   );
 }
 
 function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChanged: () => void }) {
+  const toast = useToast();
+  const { confirm, modal } = useConfirm();
   const [domain, setDomain] = useState(creator.customDomain || "");
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -1361,6 +2166,7 @@ function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChang
         return;
       }
       setChallengeHost(json.challengeHost);
+      toast("Domaine enregistré — ajoutez l'enregistrement DNS ci-dessous");
       onChanged();
     } finally {
       setSaving(false);
@@ -1368,11 +2174,14 @@ function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChang
   }
 
   async function removeDomain() {
+    const ok = await confirm("Retirer ce domaine personnalisé ?");
+    if (!ok) return;
     setSaving(true);
     try {
       await fetch("/api/custom-domain", { method: "DELETE" });
       setDomain("");
       setChallengeHost(null);
+      toast("Domaine retiré");
       onChanged();
     } finally {
       setSaving(false);
@@ -1389,6 +2198,9 @@ function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChang
         setVerifyMessage(json.error || "Erreur.");
         return;
       }
+      if (json.verified) {
+        toast("Domaine vérifié !");
+      }
       setVerifyMessage(json.verified ? "Domaine vérifié !" : json.error || "Pas encore trouvé.");
       onChanged();
     } finally {
@@ -1396,60 +2208,85 @@ function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChang
     }
   }
 
+  const step = creator.customDomainVerified ? 3 : challengeHost ? 2 : 1;
+
   return (
     <div>
       <h3 className="text-base font-medium mb-1">Domaine personnalisé</h3>
       <p className="text-sm text-muted mb-4">
         Optionnel, plus technique — remplacez le lien melii.../c/... par votre propre
-        domaine (ex. lunabot.com). Nécessite d&apos;ajouter un enregistrement DNS chez
-        votre registrar, puis de pointer le domaine vers Melii (étape documentée dans
-        le README de déploiement).
+        domaine (ex. lunabot.com).
       </p>
 
-      <div className="card p-5 space-y-4">
-        <label className="block">
-          <span className="block text-sm text-muted mb-1.5">Domaine</span>
-          <div className="flex items-center gap-2">
-            <input
-              className="input"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value.toLowerCase())}
-              placeholder="lunabot.com"
-            />
-            <button
-              onClick={saveDomain}
-              disabled={saving || !domain}
-              className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60 shrink-0"
-            >
-              {saving ? "..." : "Enregistrer"}
-            </button>
+      <div className="card p-5 space-y-5">
+        <div className="flex gap-2.5">
+          <StepBadge n={1} done={step > 1} active={step === 1} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium mb-2">Enregistrer votre domaine</p>
+            <div className="flex items-center gap-2">
+              <input
+                className="input"
+                value={domain}
+                onChange={(e) => setDomain(e.target.value.toLowerCase())}
+                placeholder="lunabot.com"
+                disabled={step > 1}
+              />
+              {step === 1 && (
+                <button
+                  onClick={saveDomain}
+                  disabled={saving || !domain}
+                  className="gradient-btn rounded-full px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60 shrink-0"
+                >
+                  {saving ? "..." : "Enregistrer"}
+                </button>
+              )}
+            </div>
+            {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
           </div>
-        </label>
+        </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-
-        {challengeHost && !creator.customDomainVerified && (
-          <div className="rounded-xl bg-surface-2 p-4 space-y-2 text-sm">
-            <p className="text-muted">
-              Ajoutez cet enregistrement TXT chez votre registrar, puis cliquez sur
-              Vérifier (la propagation peut prendre quelques heures) :
-            </p>
-            <p className="font-mono text-xs break-all">Type : TXT</p>
-            <p className="font-mono text-xs break-all">Hôte : {challengeHost}</p>
-            <p className="font-mono text-xs break-all">Valeur : {creator.customDomainVerifyToken}</p>
-            <button
-              onClick={verify}
-              disabled={verifying}
-              className="mt-2 rounded-full px-5 py-2 text-xs font-medium border border-border hover:border-muted transition disabled:opacity-60"
-            >
-              {verifying ? "Vérification..." : "Vérifier"}
-            </button>
-            {verifyMessage && <p className="text-muted">{verifyMessage}</p>}
+        {challengeHost && (
+          <div className="flex gap-2.5">
+            <StepBadge n={2} done={step > 2} active={step === 2} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium mb-2">Ajouter l&apos;enregistrement DNS</p>
+              {!creator.customDomainVerified ? (
+                <div className="rounded-xl bg-surface-2 p-4 space-y-1.5 text-sm">
+                  <p className="text-muted text-xs mb-2">
+                    Chez votre registrar (la propagation peut prendre quelques heures) :
+                  </p>
+                  <p className="font-mono text-xs break-all">Type : TXT</p>
+                  <p className="font-mono text-xs break-all">Hôte : {challengeHost}</p>
+                  <p className="font-mono text-xs break-all">Valeur : {creator.customDomainVerifyToken}</p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted">Enregistrement ajouté.</p>
+              )}
+            </div>
           </div>
         )}
 
-        {creator.customDomainVerified && (
-          <p className="text-sm text-emerald-300">Domaine vérifié et actif.</p>
+        {challengeHost && (
+          <div className="flex gap-2.5">
+            <StepBadge n={3} done={creator.customDomainVerified} active={step === 3 && !creator.customDomainVerified} />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium mb-2">Vérifier</p>
+              {creator.customDomainVerified ? (
+                <p className="text-sm text-emerald-300">Domaine vérifié et actif.</p>
+              ) : (
+                <>
+                  <button
+                    onClick={verify}
+                    disabled={verifying}
+                    className="rounded-full px-5 py-2 text-xs font-medium border border-border hover:border-muted transition disabled:opacity-60"
+                  >
+                    {verifying ? "Vérification..." : "Vérifier"}
+                  </button>
+                  {verifyMessage && <p className="text-muted text-sm mt-2">{verifyMessage}</p>}
+                </>
+              )}
+            </div>
+          </div>
         )}
 
         {creator.customDomain && (
@@ -1458,6 +2295,23 @@ function CustomDomainSection({ creator, onChanged }: { creator: Creator; onChang
           </button>
         )}
       </div>
+      {modal}
     </div>
+  );
+}
+
+function StepBadge({ n, done, active }: { n: number; done: boolean; active: boolean }) {
+  return (
+    <span
+      className={`shrink-0 w-6 h-6 rounded-full text-xs flex items-center justify-center font-medium ${
+        done
+          ? "bg-[var(--success-bg)] text-[var(--success)]"
+          : active
+            ? "bg-surface-2 text-foreground border border-accent"
+            : "bg-surface-2 text-muted"
+      }`}
+    >
+      {done ? "✓" : n}
+    </span>
   );
 }

@@ -5,7 +5,14 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { containsSafetyKeyword, buildSystemPrompt, SAFE_FALLBACK_REPLY, TONE_PRESETS } = require("../persona");
+const {
+  containsSafetyKeyword,
+  buildSystemPrompt,
+  SAFE_FALLBACK_REPLY,
+  TONE_PRESETS,
+  VALID_LANGUAGES,
+  getSafeFallbackReply,
+} = require("../persona");
 
 test("containsSafetyKeyword détecte les signaux de minorité", () => {
   assert.equal(containsSafetyKeyword("je suis mineure en fait"), true);
@@ -77,4 +84,77 @@ test("buildSystemPrompt inclut la bio seulement si elle est fournie", () => {
   const withoutBio = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [] });
   assert.match(withBio, /Passionnée de yoga/);
   assert.doesNotMatch(withoutBio, /Contexte sur toi/);
+});
+
+// --- Langue du bot (multilingue) -------------------------------------------
+
+test("VALID_LANGUAGES contient fr, en, es (et rien d'autre pour l'instant)", () => {
+  assert.deepEqual(VALID_LANGUAGES.slice().sort(), ["en", "es", "fr"]);
+});
+
+test("buildSystemPrompt sans langue précisée retombe sur le comportement français historique", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [] });
+  assert.match(prompt, /Réponds toujours en français/);
+});
+
+test("buildSystemPrompt avec language: 'en' instruit une réponse par défaut en anglais", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], language: "en" });
+  assert.match(prompt, /Always reply in English/);
+  assert.doesNotMatch(prompt, /Réponds toujours en français/);
+});
+
+test("buildSystemPrompt avec language: 'es' instruit une réponse par défaut en espagnol", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], language: "es" });
+  assert.match(prompt, /Responde siempre en español/);
+});
+
+test("buildSystemPrompt avec une langue inconnue retombe sur le français plutôt que de planter", () => {
+  const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], language: "de" });
+  assert.match(prompt, /Réponds toujours en français/);
+});
+
+test("buildSystemPrompt garde toujours les deux garde-fous [GARDE-FOU], quelle que soit la langue configurée", () => {
+  for (const language of [...VALID_LANGUAGES, undefined]) {
+    const prompt = buildSystemPrompt({ creatorName: "Luna", tone: "doux_complice", bio: "", tiers: [], language });
+    assert.match(prompt, /\[GARDE-FOU\]/);
+  }
+});
+
+test("containsSafetyKeyword détecte les signaux de détresse/minorité en anglais, pas seulement en français", () => {
+  assert.equal(containsSafetyKeyword("i want to kill myself"), true);
+  assert.equal(containsSafetyKeyword("i'm a minor btw"), true);
+  assert.equal(containsSafetyKeyword("this is blackmail"), true);
+});
+
+test("containsSafetyKeyword détecte les signaux de détresse/minorité en espagnol, pas seulement en français", () => {
+  assert.equal(containsSafetyKeyword("quiero morir"), true);
+  assert.equal(containsSafetyKeyword("soy menor de edad"), true);
+  assert.equal(containsSafetyKeyword("es un chantaje"), true);
+});
+
+test("containsSafetyKeyword reste indépendant de la langue configurée du bot : un mot-clé anglais déclenche même sans language passé en argument", () => {
+  // containsSafetyKeyword ne prend pas la langue du bot en paramètre — elle
+  // vérifie systématiquement toutes les langues gérées, quel que soit le
+  // réglage persona_language de la créatrice qui reçoit ce message.
+  assert.equal(containsSafetyKeyword("please don't tell anyone, blackmail"), true);
+});
+
+test("containsSafetyKeyword ne déclenche pas sur un message normal en anglais ou en espagnol", () => {
+  assert.equal(containsSafetyKeyword("hey, how are you doing today?"), false);
+  assert.equal(containsSafetyKeyword("hola, quiero ver tus fotos"), false);
+});
+
+test("getSafeFallbackReply renvoie une réponse localisée par langue, sans lien ni ton commercial", () => {
+  for (const language of VALID_LANGUAGES) {
+    const reply = getSafeFallbackReply(language);
+    assert.ok(reply.length > 0);
+    assert.equal(/https?:\/\//.test(reply), false);
+  }
+  assert.notEqual(getSafeFallbackReply("en"), getSafeFallbackReply("fr"));
+  assert.notEqual(getSafeFallbackReply("es"), getSafeFallbackReply("fr"));
+});
+
+test("getSafeFallbackReply retombe sur le français pour une langue inconnue ou absente", () => {
+  assert.equal(getSafeFallbackReply("de"), SAFE_FALLBACK_REPLY);
+  assert.equal(getSafeFallbackReply(undefined), SAFE_FALLBACK_REPLY);
 });

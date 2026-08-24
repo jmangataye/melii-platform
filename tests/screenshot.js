@@ -42,6 +42,7 @@ const PUBLIC_PAGES = [
 // vers le libellé exact affiché dans DashboardApp.tsx (TABS), pour ne plus
 // dépendre d'une correspondance regex approximative.
 const DASHBOARD_TABS = [
+  { key: "overview", label: "Vue d'ensemble" },
   { key: "chat", label: "Chat en ligne" },
   { key: "persona", label: "Personnalité" },
   { key: "liens", label: "Liens & tarifs" },

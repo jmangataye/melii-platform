@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Creator } from "@melii/db";
 import { appendMessage, getRecentMessages, listTiers } from "@melii/db";
-import { buildSystemPrompt, containsSafetyKeyword, SAFE_FALLBACK_REPLY } from "@melii/db/persona";
+import { buildSystemPrompt, containsSafetyKeyword, getSafeFallbackReply } from "@melii/db/persona";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
 
@@ -47,13 +47,14 @@ export async function generateBotReply(
   await appendMessage({ creatorId: creator.id, chatId, role: "user", content: userText, flagged });
 
   if (flagged) {
+    const fallbackReply = getSafeFallbackReply(creator.personaLanguage);
     await appendMessage({
       creatorId: creator.id,
       chatId,
       role: "assistant",
-      content: SAFE_FALLBACK_REPLY,
+      content: fallbackReply,
     });
-    return SAFE_FALLBACK_REPLY;
+    return fallbackReply;
   }
 
   const rawTiers = await listTiers(creator.id);
@@ -67,6 +68,7 @@ export async function generateBotReply(
     tone: creator.personaTone,
     bio: creator.personaBio,
     tiers,
+    language: creator.personaLanguage,
   });
 
   const history = await getRecentMessages({ creatorId: creator.id, chatId, limit: 20 });

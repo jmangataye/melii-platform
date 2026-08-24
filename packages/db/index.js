@@ -90,6 +90,7 @@ function rowToCreator(row) {
     displayName: row.display_name,
     personaTone: row.persona_tone,
     personaBio: row.persona_bio,
+    personaLanguage: row.persona_language,
     telegramBotToken: row.telegram_bot_token,
     telegramBotUsername: row.telegram_bot_username,
     telegramWebhookSecret: row.telegram_webhook_secret,
@@ -277,12 +278,17 @@ async function deleteCreator(creatorId) {
   return rowCount > 0;
 }
 
-async function updateCreatorPersona(creatorId, { tone, bio, displayName }) {
+async function updateCreatorPersona(creatorId, { tone, bio, displayName, language }) {
+  // `language` reste optionnel côté appelant : les appels déjà existants
+  // (aucun autre endroit dans le code au moment de cet ajout, mais on garde
+  // la même prudence que updateCreatorProfile pour galleryUrls) ne doivent
+  // pas écraser la langue déjà enregistrée s'ils ne la fournissent pas.
+  const current = await getCreatorById(creatorId);
   await query(
     `UPDATE creators
-     SET persona_tone = $1, persona_bio = $2, display_name = $3, updated_at = now()
-     WHERE id = $4`,
-    [tone, bio, displayName, creatorId]
+     SET persona_tone = $1, persona_bio = $2, display_name = $3, persona_language = $4, updated_at = now()
+     WHERE id = $5`,
+    [tone, bio, displayName, language || current?.personaLanguage || "fr", creatorId]
   );
   return getCreatorById(creatorId);
 }
@@ -543,7 +549,62 @@ async function getClicksByDay(creatorId, days = 14) {
   return rows.map((r) => ({ day: r.day, clicks: Number(r.clicks) }));
 }
 
-async function getStats(creatorId) {
+// --- Visites du lien de chat (attribution par source) --------------------
+// Voir schema.js pour le contexte de la table link_visits. `source` est du
+// texte libre choisi par la créatrice (bio/story/post/...) : on le nettoie
+// et le borne côté API (voir apps/web/app/c/[creatorId]/page.tsx), pas ici —
+// cette couche reste un simple accès aux données, comme le reste du fichier.
+async function logLinkVisit({ creatorId, source }) {
+  await query(`INSERT INTO link_visits (id, creator_id, source) VALUES ($1, $2, $3)`, [
+    id(),
+    creatorId,
+    source || "direct",
+  ]);
+}
+
+async function getVisitsBySource(creatorId, days = 14) {
+  const { rows } = await query(
+    `SELECT source, COUNT(*) as visits FROM link_visits
+     WHERE creator_id = $1 AND created_at > now() - make_interval(days => $2)
+     GROUP BY source ORDER BY visits DESC`,
+    [creatorId, days]
+  );
+  return rows.map((r) => ({ source: r.source, visits: Number(r.visits) }));
+}
+
+// --- Segmentation basique des fans (nouveaux vs récurrents) ---------------
+// Basée uniquement sur conversation_messages (chat_id) : c'est la seule
+// notion d'identité "fan" que la plateforme a réellement (le chat web n'a
+// pas de compte, et sale_declarations n'est pas relié à un chat_id — une
+// vente déclarée ne peut donc pas être rattachée à un fan précis). On ne
+// segmente donc PAS "acheteurs vs non-acheteurs" ici, contrairement à ce
+// qu'un outil de CRM multi-comptes pourrait faire : ce serait inventer une
+// donnée qu'on n'a pas.
+// "Nouveau" = son tout premier message tombe dans la fenêtre `days`.
+// "Récurrent" = actif dans la fenêtre, mais avait déjà écrit avant.
+async function getFanSegmentation(creatorId, days = 14) {
+  const { rows } = await query(
+    `WITH first_seen AS (
+       SELECT chat_id, MIN(created_at) as first_at
+       FROM conversation_messages
+       WHERE creator_id = $1
+       GROUP BY chat_id
+     ),
+     active AS (
+       SELECT DISTINCT chat_id FROM conversation_messages
+       WHERE creator_id = $1 AND created_at > now() - make_interval(days => $2)
+     )
+     SELECT
+       COUNT(*) FILTER (WHERE fs.first_at > now() - make_interval(days => $2)) as new_fans,
+       COUNT(*) FILTER (WHERE fs.first_at <= now() - make_interval(days => $2)) as returning_fans
+     FROM active a JOIN first_seen fs ON fs.chat_id = a.chat_id`,
+    [creatorId, days]
+  );
+  const row = rows[0] || { new_fans: 0, returning_fans: 0 };
+  return { newFans: Number(row.new_fans), returningFans: Number(row.returning_fans) };
+}
+
+async function getStats(creatorId, days = 14) {
   const { rows: clicksByTier } = await query(
     `SELECT tier_id, COUNT(*) as clicks FROM click_events
      WHERE creator_id = $1 GROUP BY tier_id`,
@@ -557,9 +618,14 @@ async function getStats(creatorId) {
   );
 
   const totalDeclaredCents = Number(totalRows[0].total);
-  const clicksByDay = await getClicksByDay(creatorId, 14);
+  // `days` pilote la fenêtre du graphique (sélecteur de période côté
+  // dashboard) — le reste des chiffres (total déclaré, commission...) reste
+  // sur toute la durée du compte, pas seulement cette fenêtre.
+  const clicksByDay = await getClicksByDay(creatorId, days);
   const referralCount = await getReferralCount(creatorId);
   const commissionRate = effectiveCommissionRate(referralCount);
+  const visitsBySource = await getVisitsBySource(creatorId, days);
+  const fanSegmentation = await getFanSegmentation(creatorId, days);
 
   return {
     clicksByTier: Object.fromEntries(clicksByTier.map((r) => [r.tier_id, Number(r.clicks)])),
@@ -568,6 +634,8 @@ async function getStats(creatorId) {
     commissionRate,
     commissionOwedCents: Math.round(totalDeclaredCents * commissionRate),
     referralCount,
+    visitsBySource,
+    fanSegmentation,
   };
 }
 
@@ -616,6 +684,31 @@ async function listFlaggedConversations(limit = 50) {
     createdAt: r.created_at,
     creatorDisplayName: r.display_name,
     creatorEmail: r.email,
+  }));
+}
+
+// Contexte autour d'un message signalé (voir ModerationPanel côté admin) —
+// afficher le message isolé ne suffit pas toujours à juger si un signalement
+// est un vrai souci ou un faux positif ; quelques messages avant/après
+// aident à trancher rapidement. Bornée à une seule conversation (creatorId +
+// chatId), donc le tri en mémoire reste sur un volume raisonnable même si la
+// conversation est longue.
+async function getMessageContext(creatorId, chatId, messageId, contextSize = 2) {
+  const { rows } = await query(
+    `SELECT id, role, content, created_at, flagged FROM conversation_messages
+     WHERE creator_id = $1 AND chat_id = $2 ORDER BY created_at ASC`,
+    [creatorId, chatId]
+  );
+  const idx = rows.findIndex((r) => r.id === messageId);
+  if (idx === -1) return [];
+  const start = Math.max(0, idx - contextSize);
+  const end = Math.min(rows.length, idx + contextSize + 1);
+  return rows.slice(start, end).map((r) => ({
+    id: r.id,
+    role: r.role,
+    content: r.content,
+    createdAt: r.created_at,
+    flagged: r.flagged,
   }));
 }
 
@@ -996,11 +1089,15 @@ module.exports = {
   getStats,
   getClicksByDay,
   getReferralCount,
+  logLinkVisit,
+  getVisitsBySource,
+  getFanSegmentation,
   appendMessage,
   getRecentMessages,
   getConversationVolume,
   purgeOldConversations,
   listFlaggedConversations,
+  getMessageContext,
   markFlagReviewed,
   adminListCreators,
   setCustomDomainPending,

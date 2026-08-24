@@ -1,6 +1,16 @@
 import { notFound } from "next/navigation";
-import { getCreatorBySlugOrId } from "@melii/db";
+import { getCreatorBySlugOrId, logLinkVisit } from "@melii/db";
 import ChatWidget from "./ChatWidget";
+
+// Le "?src=" est du texte libre saisi par la créatrice (voir le générateur
+// de liens tagués dans l'onglet Chat en ligne du dashboard) — on le borne et
+// on le nettoie ici plutôt que de faire confiance à ce qui arrive dans
+// l'URL, avant de l'enregistrer en base (voir logLinkVisit).
+function sanitizeSource(raw: string | undefined): string {
+  if (!raw) return "direct";
+  const cleaned = raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+  return cleaned || "direct";
+}
 
 // Page publique : c'est le lien que chaque créatrice partage (bio Instagram,
 // Linktree, etc.) pour que sa communauté discute directement avec son bot,
@@ -10,15 +20,25 @@ import ChatWidget from "./ChatWidget";
 // getCreatorBySlugOrId résout les deux sans jamais casser un lien existant.
 export default async function PublicChatPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ creatorId: string }>;
+  searchParams: Promise<{ src?: string }>;
 }) {
   const { creatorId } = await params;
+  const { src } = await searchParams;
   const creator = await getCreatorBySlugOrId(creatorId);
 
   if (!creator) {
     notFound();
   }
+
+  // Best-effort : une visite non comptabilisée (erreur DB transitoire) ne
+  // doit jamais empêcher la page de chat de s'afficher — c'est une métrique
+  // secondaire, pas une dépendance dure du parcours visiteur.
+  logLinkVisit({ creatorId: creator.id, source: sanitizeSource(src) }).catch((err) => {
+    console.error(`[${creator.displayName}] échec de l'enregistrement de la visite:`, err);
+  });
 
   return (
     <main className="flex-1 flex flex-col">

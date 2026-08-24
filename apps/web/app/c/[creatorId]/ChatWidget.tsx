@@ -34,7 +34,32 @@ export default function ChatWidget({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [slowHistory, setSlowHistory] = useState(false);
+  const [slowSend, setSlowSend] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Le service (Render, plan gratuit) peut s'être mis en veille — la
+  // première requête après une période d'inactivité prend alors bien plus
+  // longtemps qu'un aller-retour réseau normal. Sans indice, ça ressemble à
+  // un bot cassé plutôt qu'à un simple réveil ; on ajoute donc un message
+  // rassurant seulement si l'attente dépasse ce qu'on verrait normalement.
+  useEffect(() => {
+    if (!loadingHistory) return;
+    const t = setTimeout(() => setSlowHistory(true), 4000);
+    return () => {
+      clearTimeout(t);
+      setSlowHistory(false);
+    };
+  }, [loadingHistory]);
+
+  useEffect(() => {
+    if (!sending) return;
+    const t = setTimeout(() => setSlowSend(true), 5000);
+    return () => {
+      clearTimeout(t);
+      setSlowSend(false);
+    };
+  }, [sending]);
 
   useEffect(() => {
     const id = getOrCreateVisitorId(creatorId);
@@ -94,6 +119,11 @@ export default function ChatWidget({
           <div className="space-y-3">
             <div className="max-w-[70%] h-9 rounded-2xl rounded-bl-sm bg-surface-2 animate-pulse" />
             <div className="max-w-[50%] h-9 rounded-2xl rounded-bl-sm bg-surface-2 animate-pulse ml-0" />
+            {slowHistory && (
+              <p className="fade-in-up text-xs text-muted text-center pt-2">
+                Ça prend un peu plus longtemps que d&apos;habitude — le service se réveille, patiente quelques secondes.
+              </p>
+            )}
           </div>
         )}
         {!loadingHistory && messages.length === 0 && (
@@ -116,10 +146,17 @@ export default function ChatWidget({
           </div>
         ))}
         {sending && (
-          <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-3 flex items-center gap-1.5" aria-label={`${displayName} est en train d'écrire`}>
-            <span className="typing-dot" />
-            <span className="typing-dot" />
-            <span className="typing-dot" />
+          <div className="space-y-2">
+            <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-surface-2 px-4 py-3 flex items-center gap-1.5" aria-label={`${displayName} est en train d'écrire`}>
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+            {slowSend && (
+              <p className="fade-in-up text-xs text-muted">
+                Ça prend un peu plus longtemps que d&apos;habitude — le bot se réveille, patiente quelques secondes.
+              </p>
+            )}
           </div>
         )}
         <div ref={bottomRef} />

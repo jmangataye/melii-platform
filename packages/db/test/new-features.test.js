@@ -399,6 +399,119 @@ test("findStalledTelegramConversations trouve une conversation abandonnée élig
   );
 });
 
+// --- Langue du bot ---------------------------------------------------------
+
+test("createCreator crée une créatrice avec persona_language = 'fr' par défaut", async () => {
+  const c = await makeCreator("langdefault");
+  assert.equal(c.personaLanguage, "fr");
+});
+
+test("updateCreatorPersona change la langue quand elle est fournie", async () => {
+  const c = await makeCreator("langupdate");
+  const updated = await db.updateCreatorPersona(c.id, {
+    tone: "doux_complice",
+    bio: "",
+    displayName: c.displayName,
+    language: "en",
+  });
+  assert.equal(updated.personaLanguage, "en");
+});
+
+test("updateCreatorPersona sans language conserve la langue déjà enregistrée (régression)", async () => {
+  const c = await makeCreator("langkeep");
+  await db.updateCreatorPersona(c.id, { tone: "doux_complice", bio: "", displayName: c.displayName, language: "es" });
+  // Simule un appel qui n'envoie pas encore `language` (ex. ancien client) —
+  // ne doit pas silencieusement repasser à 'fr'.
+  const afterToneChange = await db.updateCreatorPersona(c.id, {
+    tone: "direct_vendeur",
+    bio: "",
+    displayName: c.displayName,
+  });
+  assert.equal(afterToneChange.personaLanguage, "es");
+});
+
+// --- Tracking par lien (attribution de source) ------------------------------
+
+test("logLinkVisit + getVisitsBySource regroupent les visites par source, triées par volume décroissant", async () => {
+  const c = await makeCreator("visitssource");
+  await db.logLinkVisit({ creatorId: c.id, source: "bio" });
+  await db.logLinkVisit({ creatorId: c.id, source: "bio" });
+  await db.logLinkVisit({ creatorId: c.id, source: "story" });
+
+  const bySource = await db.getVisitsBySource(c.id, 14);
+  assert.deepEqual(bySource, [
+    { source: "bio", visits: 2 },
+    { source: "story", visits: 1 },
+  ]);
+});
+
+test("logLinkVisit sans source retombe sur 'direct'", async () => {
+  const c = await makeCreator("visitsdirect");
+  await db.logLinkVisit({ creatorId: c.id });
+  const bySource = await db.getVisitsBySource(c.id, 14);
+  assert.deepEqual(bySource, [{ source: "direct", visits: 1 }]);
+});
+
+test("getVisitsBySource ignore les visites hors de la fenêtre demandée", async () => {
+  const c = await makeCreator("visitswindow");
+  await db.logLinkVisit({ creatorId: c.id, source: "ancienne" });
+  await rawPool.query(
+    `UPDATE link_visits SET created_at = now() - interval '30 days' WHERE creator_id = $1`,
+    [c.id]
+  );
+  const bySource = await db.getVisitsBySource(c.id, 14);
+  assert.deepEqual(bySource, []);
+});
+
+test("getStats inclut visitsBySource", async () => {
+  const c = await makeCreator("statsvisits");
+  await db.logLinkVisit({ creatorId: c.id, source: "bio" });
+  const stats = await db.getStats(c.id);
+  assert.deepEqual(stats.visitsBySource, [{ source: "bio", visits: 1 }]);
+});
+
+// --- Segmentation basique des fans -----------------------------------------
+
+test("getFanSegmentation compte un fan comme nouveau si son premier message tombe dans la fenêtre", async () => {
+  const c = await makeCreator("fansnew");
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-new", role: "user", content: "salut" });
+
+  const seg = await db.getFanSegmentation(c.id, 14);
+  assert.equal(seg.newFans, 1);
+  assert.equal(seg.returningFans, 0);
+});
+
+test("getFanSegmentation compte un fan comme récurrent s'il avait déjà écrit avant la fenêtre et reste actif dedans", async () => {
+  const c = await makeCreator("fansreturning");
+  const chatId = "chat-returning";
+
+  await rawPool.query(
+    `INSERT INTO conversation_messages (id, creator_id, chat_id, role, content, created_at)
+     VALUES ($1, $2, $3, 'user', 'premier message, il y a longtemps', now() - interval '30 days')`,
+    [db.id(), c.id, chatId]
+  );
+  await db.appendMessage({ creatorId: c.id, chatId, role: "user", content: "je reviens !" });
+
+  const seg = await db.getFanSegmentation(c.id, 14);
+  assert.equal(seg.newFans, 0);
+  assert.equal(seg.returningFans, 1);
+});
+
+test("getFanSegmentation exclut un fan inactif pendant la fenêtre, même s'il a écrit avant", async () => {
+  const c = await makeCreator("fansinactive");
+  const chatId = "chat-inactive";
+
+  await rawPool.query(
+    `INSERT INTO conversation_messages (id, creator_id, chat_id, role, content, created_at)
+     VALUES ($1, $2, $3, 'user', 'un seul message, ancien', now() - interval '30 days')`,
+    [db.id(), c.id, chatId]
+  );
+
+  const seg = await db.getFanSegmentation(c.id, 14);
+  assert.equal(seg.newFans, 0);
+  assert.equal(seg.returningFans, 0);
+});
+
 test("findStalledTelegramConversations exclut une conversation contenant un message flagged (garde-fou sécurité)", async () => {
   const c = await makeCreator("relanceflagged");
   await db.updateCreatorTelegram(c.id, {

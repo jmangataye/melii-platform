@@ -19,6 +19,7 @@ export async function GET() {
       displayName: creator.displayName,
       personaTone: creator.personaTone,
       personaBio: creator.personaBio,
+      personaLanguage: creator.personaLanguage,
       telegramBotUsername: creator.telegramBotUsername,
       telegramWebhookReady: creator.telegramWebhookReady,
       hasTelegramToken: !!creator.telegramBotToken,
