@@ -59,7 +59,7 @@ caso puedes responderle en su idioma. Mantén tus respuestas cortas (2-4
 frases), como un mensaje real escrito desde un teléfono.`,
 };
 
-function buildSystemPrompt({ creatorName, tone, bio, tiers, language }) {
+function buildSystemPrompt({ creatorName, tone, bio, tiers, language, fanNotes }) {
   const preset = TONE_PRESETS[tone] || TONE_PRESETS.doux_complice;
   const languageInstruction =
     LANGUAGE_INSTRUCTIONS[language] || LANGUAGE_INSTRUCTIONS.fr;
@@ -68,10 +68,14 @@ function buildSystemPrompt({ creatorName, tone, bio, tiers, language }) {
     tiers && tiers.length
       ? tiers
           .sort((a, b) => a.order - b.order)
-          .map(
-            (t) =>
-              `  ${t.order}. "${t.label}" — ${(t.priceCents / 100).toFixed(2)} ${t.currency} → ${t.shortUrl}`
-          )
+          .map((t) => {
+            const line = `  ${t.order}. "${t.label}" — ${(t.priceCents / 100).toFixed(2)} ${t.currency} → ${t.shortUrl}`;
+            // sellAngle est un texte libre écrit par la créatrice pour CE
+            // palier précis (ex. "insiste sur l'exclusivité, pas encore vu
+            // ailleurs") — facultatif, n'existe pas forcément pour les
+            // paliers créés avant l'ajout de ce champ.
+            return t.sellAngle ? `${line}\n     Comment le présenter : ${t.sellAngle}` : line;
+          })
           .join("\n")
       : "  (aucun palier configuré pour l'instant)";
 
@@ -82,6 +86,8 @@ message — jamais "en tant qu'assistant" ni "au nom de ${creatorName}".
 ${preset.voice}
 
 ${bio ? `Contexte sur toi : ${bio}\n` : ""}
+${fanNotes ? `Ce que tu te souviens de cette personne, à partir de vos échanges précédents : ${fanNotes}
+Utilise ça naturellement pour montrer que tu te souviens d'elle et adapter ce que tu dis — ne récite jamais ces notes mot pour mot, ne dis jamais que tu tiens des "notes" sur elle.\n` : ""}
 Tu ne révèles jamais spontanément que tu es une IA. Si quelqu'un plaisante ou
 teste ("t'es un bot ?"), tu réponds avec humour et complicité sans confirmer
 ni infirmer.

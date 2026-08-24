@@ -1,9 +1,28 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Creator } from "@melii/db";
-import { appendMessage, getRecentMessages, listTiers } from "@melii/db";
+import {
+  appendMessage,
+  getRecentMessages,
+  listTiers,
+  getFanProfile,
+  getMessageCountForChat,
+  upsertFanNotes,
+} from "@melii/db";
 import { buildSystemPrompt, containsSafetyKeyword, getSafeFallbackReply } from "@melii/db/persona";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5";
+
+// Modèle dédié au résumé fan — un appel court, peu fréquent (voir
+// FAN_SUMMARY_INTERVAL_MESSAGES ci-dessous), pas besoin du modèle principal :
+// un modèle plus petit/rapide suffit largement et garde le coût marginal.
+const ANTHROPIC_FAN_SUMMARY_MODEL =
+  process.env.ANTHROPIC_FAN_SUMMARY_MODEL || "claude-3-5-haiku-latest";
+
+// On ne régénère les notes fan qu'une fois tous les N messages plutôt qu'à
+// chaque échange — la mémoire n'a pas besoin d'être mise à jour message par
+// message, et ça multiplierait par deux le nombre d'appels API pour un
+// bénéfice marginal.
+const FAN_SUMMARY_INTERVAL_MESSAGES = 8;
 
 let _anthropic: Anthropic | null = null;
 function anthropic() {
@@ -21,6 +40,76 @@ export function publicWebUrl() {
     process.env.RENDER_EXTERNAL_URL ||
     "http://localhost:3000"
   );
+}
+
+/**
+ * Régénère (si besoin) la mémoire légère d'un fan : un résumé texte évolutif
+ * ("notes") + une estimation de potentiel, à partir de l'historique complet
+ * de la conversation. Fire-and-forget côté appelant — un échec ici ne doit
+ * jamais faire échouer l'envoi de la réponse au fan, c'est une amélioration
+ * secondaire, pas un chemin critique.
+ *
+ * Ne se déclenche que tous les FAN_SUMMARY_INTERVAL_MESSAGES messages (voir
+ * summarized_through en base) pour garder le coût d'appel modèle sous
+ * contrôle — pas besoin de re-résumer à chaque message.
+ */
+async function maybeUpdateFanProfile(creator: Creator, chatId: string): Promise<void> {
+  try {
+    const [profile, messageCount] = await Promise.all([
+      getFanProfile(creator.id, chatId),
+      getMessageCountForChat(creator.id, chatId),
+    ]);
+    const summarizedThrough = profile?.summarizedThrough || 0;
+    if (messageCount - summarizedThrough < FAN_SUMMARY_INTERVAL_MESSAGES) return;
+
+    const history = await getRecentMessages({ creatorId: creator.id, chatId, limit: 60 });
+    if (history.length === 0) return;
+
+    const transcript = history
+      .map((m) => `${m.role === "user" ? "Fan" : creator.displayName}: ${m.content}`)
+      .join("\n");
+
+    const response = await anthropic().messages.create({
+      model: ANTHROPIC_FAN_SUMMARY_MODEL,
+      max_tokens: 300,
+      system:
+        `Tu analyses une conversation entre une créatrice de contenu (${creator.displayName}) ` +
+        `et un de ses fans, pour l'aider à se souvenir de qui est ce fan et à mieux vendre ses ` +
+        `offres. Notes précédentes sur ce fan (peuvent être vides) : "${profile?.notes || ""}".\n\n` +
+        `Réponds UNIQUEMENT avec un objet JSON, sans texte autour, au format exact :\n` +
+        `{"notes": "résumé factuel court (2-4 phrases) : prénom si connu, centres ` +
+        `d'intérêt, ce qui l'engage, historique d'achat ou d'hésitation, éléments à ` +
+        `retenir pour personnaliser la conversation", "potential": "faible" | "moyen" | "élevé"}\n\n` +
+        `"potential" reflète la probabilité que ce fan achète une offre bientôt, d'après son ` +
+        `engagement et ses signaux dans la conversation. Ne mentionne jamais qu'il s'agit d'une ` +
+        `analyse automatisée dans le champ "notes" — écris-le comme une note interne factuelle.`,
+      messages: [{ role: "user", content: transcript }],
+    });
+
+    const raw = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("")
+      .trim();
+
+    let parsed: { notes?: string; potential?: string } = {};
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(match ? match[0] : raw);
+    } catch {
+      // Réponse pas du JSON exploitable — on garde les notes précédentes
+      // plutôt que d'écrire n'importe quoi en base.
+      parsed = { notes: profile?.notes, potential: profile?.potential || undefined };
+    }
+
+    await upsertFanNotes(creator.id, chatId, {
+      notes: parsed.notes || profile?.notes || "",
+      potential: parsed.potential || profile?.potential || null,
+      summarizedThrough: messageCount,
+    });
+  } catch (err) {
+    console.error(`[${creator.displayName}] échec de la mise à jour du profil fan:`, err);
+  }
 }
 
 /**
@@ -57,7 +146,10 @@ export async function generateBotReply(
     return fallbackReply;
   }
 
-  const rawTiers = await listTiers(creator.id);
+  const [rawTiers, fanProfile] = await Promise.all([
+    listTiers(creator.id),
+    getFanProfile(creator.id, chatId),
+  ]);
   const tiers = rawTiers.map((t) => ({
     ...t,
     shortUrl: `${publicWebUrl()}/l/${creator.id}-${t.order}`,
@@ -69,6 +161,7 @@ export async function generateBotReply(
     bio: creator.personaBio,
     tiers,
     language: creator.personaLanguage,
+    fanNotes: fanProfile?.notes || null,
   });
 
   const history = await getRecentMessages({ creatorId: creator.id, chatId, limit: 20 });
@@ -94,6 +187,10 @@ export async function generateBotReply(
   if (!replyText) replyText = "Dis-m'en un peu plus ? 😊";
 
   await appendMessage({ creatorId: creator.id, chatId, role: "assistant", content: replyText });
+
+  // Fire-and-forget : la mise à jour de la mémoire fan ne doit jamais
+  // retarder la réponse envoyée à la personne qui discute.
+  maybeUpdateFanProfile(creator, chatId).catch(() => {});
 
   return replyText;
 }

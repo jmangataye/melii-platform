@@ -154,7 +154,7 @@ export default function ChatWidget({
             </div>
             {slowSend && (
               <p className="fade-in-up text-xs text-muted">
-                Ça prend un peu plus longtemps que d&apos;habitude — le bot se réveille, patiente quelques secondes.
+                Ça prend un peu plus longtemps que d&apos;habitude, patiente quelques secondes.
               </p>
             )}
           </div>

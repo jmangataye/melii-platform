@@ -43,6 +43,7 @@ export interface Tier {
   priceCents: number;
   currency: string;
   url: string;
+  sellAngle: string;
   createdAt: string;
 }
 
@@ -117,6 +118,25 @@ export interface StalledTelegramConversation {
   creatorDisplayName: string;
 }
 
+export interface FanProfile {
+  id: string;
+  creatorId: string;
+  chatId: string;
+  notes: string;
+  potential: string | null;
+  summarizedThrough: number;
+  updatedAt: string;
+}
+
+export interface FanSummary {
+  chatId: string;
+  messageCount: number;
+  firstSeenAt: string;
+  lastActiveAt: string;
+  notes: string;
+  potential: string | null;
+}
+
 export function id(): string;
 export function hashPassword(password: string): string;
 export function verifyPassword(password: string, stored: string): boolean;
@@ -138,7 +158,7 @@ export function createPasswordResetToken(creatorId: string): Promise<string>;
 export function consumePasswordResetToken(rawToken: string, newPassword: string): Promise<boolean>;
 export function listTiers(creatorId: string): Promise<Tier[]>;
 export function getTierById(tierId: string): Promise<Tier | null>;
-export function upsertTier(creatorId: string, input: { order: number; label: string; priceCents: number; currency?: string; url: string }): Promise<Tier>;
+export function upsertTier(creatorId: string, input: { order: number; label: string; priceCents: number; currency?: string; url: string; sellAngle?: string }): Promise<Tier>;
 export function deleteTier(creatorId: string, tierId: string): Promise<void>;
 export function logClick(input: { creatorId: string; tierId: string; telegramChatId?: string | null }): Promise<void>;
 export function declareSale(input: { creatorId: string; tierId: string; amountCents: number; currency?: string; note?: string }): Promise<void>;
@@ -180,6 +200,12 @@ export function consumeBackupCode(creatorId: string, code: string): Promise<bool
 export function findStalledTelegramConversations(limit?: number): Promise<StalledTelegramConversation[]>;
 export function recordRelanceSent(input: { creatorId: string; chatId: string; tierId?: string | null }): Promise<void>;
 export function updateCreatorRelance(creatorId: string, enabled: boolean): Promise<Creator>;
+
+export function getFanProfile(creatorId: string, chatId: string): Promise<FanProfile | null>;
+export function getMessageCountForChat(creatorId: string, chatId: string): Promise<number>;
+export function upsertFanNotes(creatorId: string, chatId: string, input: { notes: string; potential?: string | null; summarizedThrough: number }): Promise<void>;
+export function listFanProfiles(creatorId: string, limit?: number): Promise<FanSummary[]>;
+
 /** Exporté uniquement pour les tests — voir le commentaire dans index.js. */
 export function backfillLegacyCreators(): Promise<void>;
 

@@ -542,3 +542,122 @@ test("findStalledTelegramConversations exclut une conversation contenant un mess
   const stalled = await db.findStalledTelegramConversations(50);
   assert.ok(!stalled.some((s) => s.creatorId === c.id && s.chatId === chatId));
 });
+
+// --- Argument de vente par palier -------------------------------------------
+
+test("upsertTier enregistre sellAngle et le renvoie via listTiers/getTierById", async () => {
+  const c = await makeCreator("tiersellangle");
+  const tier = await db.upsertTier(c.id, {
+    order: 1,
+    label: "Palier 1",
+    priceCents: 500,
+    url: "https://pay.example.com/1",
+    sellAngle: "Insiste sur l'exclusivité",
+  });
+  assert.equal(tier.sellAngle, "Insiste sur l'exclusivité");
+
+  const reloaded = await db.getTierById(tier.id);
+  assert.equal(reloaded.sellAngle, "Insiste sur l'exclusivité");
+
+  const listed = await db.listTiers(c.id);
+  assert.equal(listed[0].sellAngle, "Insiste sur l'exclusivité");
+});
+
+test("upsertTier sans sellAngle sur un palier existant conserve la valeur déjà enregistrée (régression)", async () => {
+  const c = await makeCreator("tiersellangleeep");
+  await db.upsertTier(c.id, {
+    order: 1,
+    label: "Palier 1",
+    priceCents: 500,
+    url: "https://pay.example.com/1",
+    sellAngle: "Argument original",
+  });
+  // Simule un appel qui ne renvoie pas ce champ (ex. ancien client, ou
+  // réordonnancement qui ne le connaît pas) : ne doit pas l'effacer.
+  const updated = await db.upsertTier(c.id, {
+    order: 1,
+    label: "Palier 1 renommé",
+    priceCents: 600,
+    url: "https://pay.example.com/1",
+  });
+  assert.equal(updated.sellAngle, "Argument original");
+});
+
+test("un palier créé sans sellAngle a une chaîne vide par défaut, pas null", async () => {
+  const c = await makeCreator("tiersellangledefault");
+  const tier = await db.upsertTier(c.id, { order: 1, label: "Palier 1", priceCents: 500, url: "https://pay.example.com/1" });
+  assert.equal(tier.sellAngle, "");
+});
+
+// --- Mémoire légère par fan (CRM minimal) -----------------------------------
+
+test("getFanProfile renvoie null tant qu'aucune note n'a été enregistrée", async () => {
+  const c = await makeCreator("fanprofilenone");
+  const profile = await db.getFanProfile(c.id, "chat-none");
+  assert.equal(profile, null);
+});
+
+test("getMessageCountForChat compte les messages d'une conversation précise, pas les autres", async () => {
+  const c = await makeCreator("fanmsgcount");
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-a", role: "user", content: "un" });
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-a", role: "assistant", content: "deux" });
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-b", role: "user", content: "autre conversation" });
+
+  assert.equal(await db.getMessageCountForChat(c.id, "chat-a"), 2);
+  assert.equal(await db.getMessageCountForChat(c.id, "chat-b"), 1);
+});
+
+test("upsertFanNotes crée puis met à jour le profil d'un fan (une ligne par creator_id+chat_id)", async () => {
+  const c = await makeCreator("fanupsert");
+  const chatId = "chat-upsert";
+
+  await db.upsertFanNotes(c.id, chatId, { notes: "Aime la moto, encore hésitante", potential: "moyen", summarizedThrough: 8 });
+  const first = await db.getFanProfile(c.id, chatId);
+  assert.equal(first.notes, "Aime la moto, encore hésitante");
+  assert.equal(first.potential, "moyen");
+  assert.equal(first.summarizedThrough, 8);
+
+  await db.upsertFanNotes(c.id, chatId, { notes: "A acheté le premier palier", potential: "élevé", summarizedThrough: 16 });
+  const second = await db.getFanProfile(c.id, chatId);
+  assert.equal(second.id, first.id, "même ligne mise à jour, pas une nouvelle");
+  assert.equal(second.notes, "A acheté le premier palier");
+  assert.equal(second.potential, "élevé");
+  assert.equal(second.summarizedThrough, 16);
+});
+
+test("listFanProfiles regroupe par conversation, inclut les fans sans notes, triés par activité récente", async () => {
+  const c = await makeCreator("fanlist");
+
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-old", role: "user", content: "salut" });
+  await rawPool.query(
+    `UPDATE conversation_messages SET created_at = now() - interval '2 days' WHERE creator_id = $1 AND chat_id = 'chat-old'`,
+    [c.id]
+  );
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-recent", role: "user", content: "coucou" });
+  await db.appendMessage({ creatorId: c.id, chatId: "chat-recent", role: "assistant", content: "salut toi" });
+  await db.upsertFanNotes(c.id, "chat-recent", { notes: "Fan engagé", potential: "élevé", summarizedThrough: 2 });
+
+  const fans = await db.listFanProfiles(c.id);
+  assert.equal(fans.length, 2);
+  // Le plus récemment actif d'abord.
+  assert.equal(fans[0].chatId, "chat-recent");
+  assert.equal(fans[0].messageCount, 2);
+  assert.equal(fans[0].notes, "Fan engagé");
+  assert.equal(fans[0].potential, "élevé");
+
+  assert.equal(fans[1].chatId, "chat-old");
+  assert.equal(fans[1].messageCount, 1);
+  assert.equal(fans[1].notes, "", "pas de notes tant que le résumé IA n'est pas encore passé");
+  assert.equal(fans[1].potential, null);
+});
+
+test("listFanProfiles ne renvoie que les conversations de la créatrice demandée", async () => {
+  const a = await makeCreator("fanlistisoa");
+  const b = await makeCreator("fanlistisob");
+  await db.appendMessage({ creatorId: a.id, chatId: "chat-a", role: "user", content: "hello" });
+  await db.appendMessage({ creatorId: b.id, chatId: "chat-b", role: "user", content: "hello" });
+
+  const fansOfA = await db.listFanProfiles(a.id);
+  assert.ok(fansOfA.every((f) => f.chatId !== "chat-b"));
+  assert.equal(fansOfA.length, 1);
+});

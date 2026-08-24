@@ -34,6 +34,7 @@ type Tier = {
   priceCents: number;
   currency: string;
   url: string;
+  sellAngle: string;
 };
 
 type DailyClicks = { day: string; clicks: number };
@@ -69,6 +70,7 @@ const TABS = [
   { key: "liens", label: "Liens & tarifs" },
   { key: "telegram", label: "Telegram" },
   { key: "stats", label: "Statistiques" },
+  { key: "fans", label: "Fans" },
   { key: "facturation", label: "Facturation" },
   { key: "compte", label: "Compte" },
 ] as const;
@@ -262,6 +264,7 @@ function DashboardShell({ initialDisplayName }: { initialDisplayName: string }) 
           {tab === "liens" && <TiersTab tiers={tiers} onChanged={refresh} />}
           {tab === "telegram" && <TelegramTab creator={creator} onChanged={refresh} />}
           {tab === "stats" && <StatsTab stats={stats} tiers={tiers} sales={sales} />}
+          {tab === "fans" && <FansTab />}
           {tab === "facturation" && (
             <BillingTab stats={stats} tiers={tiers} sales={sales} onDeclared={loadSales} onChanged={refresh} />
           )}
@@ -734,12 +737,21 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
             {TONES.map((t) => (
               <button
                 key={t.value}
+                type="button"
                 onClick={() => setTone(t.value)}
-                className={`card p-4 text-left transition ${
-                  tone === t.value ? "border-accent" : "hover:border-muted"
+                aria-pressed={tone === t.value}
+                className={`card p-4 text-left transition flex items-center justify-between gap-2 ${
+                  tone === t.value
+                    ? "border-accent border-2 bg-surface-2"
+                    : "hover:border-muted"
                 }`}
               >
-                <span className="text-sm font-medium">{t.label}</span>
+                <span className={`text-sm ${tone === t.value ? "font-semibold" : "font-medium"}`}>{t.label}</span>
+                {tone === t.value && (
+                  <span className="shrink-0 w-5 h-5 rounded-full gradient-btn text-white text-xs flex items-center justify-center">
+                    ✓
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -751,12 +763,21 @@ function PersonaTab({ creator, onSaved }: { creator: Creator; onSaved: () => voi
             {LANGUAGES.map((l) => (
               <button
                 key={l.value}
+                type="button"
                 onClick={() => setLanguage(l.value)}
-                className={`card p-4 text-left transition ${
-                  language === l.value ? "border-accent" : "hover:border-muted"
+                aria-pressed={language === l.value}
+                className={`card p-4 text-left transition flex items-center justify-between gap-2 ${
+                  language === l.value
+                    ? "border-accent border-2 bg-surface-2"
+                    : "hover:border-muted"
                 }`}
               >
-                <span className="text-sm font-medium">{l.label}</span>
+                <span className={`text-sm ${language === l.value ? "font-semibold" : "font-medium"}`}>{l.label}</span>
+                {language === l.value && (
+                  <span className="shrink-0 w-5 h-5 rounded-full gradient-btn text-white text-xs flex items-center justify-center">
+                    ✓
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -914,6 +935,7 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
   const [label, setLabel] = useState("");
   const [priceEuros, setPriceEuros] = useState("");
   const [url, setUrl] = useState("");
+  const [sellAngle, setSellAngle] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -921,6 +943,7 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
   const [editLabel, setEditLabel] = useState("");
   const [editPriceEuros, setEditPriceEuros] = useState("");
   const [editUrl, setEditUrl] = useState("");
+  const [editSellAngle, setEditSellAngle] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -929,7 +952,7 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
   const sorted = tiers.slice().sort((a, b) => a.order - b.order);
   const nextOrder = tiers.length ? Math.max(...tiers.map((t) => t.order)) + 1 : 1;
 
-  async function upsert(body: { order: number; label: string; priceEuros: number; url: string }) {
+  async function upsert(body: { order: number; label: string; priceEuros: number; url: string; sellAngle?: string }) {
     const res = await fetch("/api/tiers", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -944,10 +967,11 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
     setSaving(true);
     setError(null);
     try {
-      await upsert({ order: nextOrder, label, priceEuros: Number(priceEuros), url });
+      await upsert({ order: nextOrder, label, priceEuros: Number(priceEuros), url, sellAngle });
       setLabel("");
       setPriceEuros("");
       setUrl("");
+      setSellAngle("");
       toast("Palier ajouté");
       onChanged();
     } catch (e) {
@@ -962,6 +986,7 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
     setEditLabel(t.label);
     setEditPriceEuros(String(t.priceCents / 100));
     setEditUrl(t.url);
+    setEditSellAngle(t.sellAngle || "");
     setEditError(null);
   }
 
@@ -969,7 +994,13 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
     setSavingEdit(true);
     setEditError(null);
     try {
-      await upsert({ order: t.order, label: editLabel, priceEuros: Number(editPriceEuros), url: editUrl });
+      await upsert({
+        order: t.order,
+        label: editLabel,
+        priceEuros: Number(editPriceEuros),
+        url: editUrl,
+        sellAngle: editSellAngle,
+      });
       toast("Palier mis à jour");
       setEditingId(null);
       onChanged();
@@ -987,8 +1018,20 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
     setReorderingId(t.id);
     try {
       await Promise.all([
-        upsert({ order: t.order, label: other.label, priceEuros: other.priceCents / 100, url: other.url }),
-        upsert({ order: other.order, label: t.label, priceEuros: t.priceCents / 100, url: t.url }),
+        upsert({
+          order: t.order,
+          label: other.label,
+          priceEuros: other.priceCents / 100,
+          url: other.url,
+          sellAngle: other.sellAngle,
+        }),
+        upsert({
+          order: other.order,
+          label: t.label,
+          priceEuros: t.priceCents / 100,
+          url: t.url,
+          sellAngle: t.sellAngle,
+        }),
       ]);
       toast("Ordre mis à jour");
       onChanged();
@@ -1046,6 +1089,18 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
                       <input className="input" value={editUrl} onChange={(e) => setEditUrl(e.target.value)} />
                     </label>
                   </div>
+                  <label className="block">
+                    <span className="block text-xs text-muted mb-1">
+                      Comment le bot doit vendre ce palier (facultatif)
+                    </span>
+                    <textarea
+                      className="input min-h-[70px] resize-y"
+                      value={editSellAngle}
+                      onChange={(e) => setEditSellAngle(e.target.value)}
+                      placeholder="Ex : insiste sur l'exclusivité, contenu qu'on ne trouve nulle part ailleurs"
+                      maxLength={400}
+                    />
+                  </label>
                   {editError && <p className="text-sm text-red-400">{editError}</p>}
                   <div className="flex items-center gap-3">
                     <button
@@ -1090,6 +1145,11 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
                       Palier {t.order} — {t.label}
                     </p>
                     <p className="text-xs text-muted truncate">{t.url}</p>
+                    {t.sellAngle && (
+                      <p className="text-xs text-muted/80 italic mt-0.5 line-clamp-1">
+                        Argument : {t.sellAngle}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-sm gradient-text font-medium">{eur(t.priceCents)}</span>
@@ -1138,6 +1198,18 @@ function TiersTab({ tiers, onChanged }: { tiers: Tier[]; onChanged: () => void }
         <label className="block">
           <span className="block text-sm text-muted mb-1.5">Lien de paiement</span>
           <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://dropfans.io/..." />
+        </label>
+        <label className="block">
+          <span className="block text-sm text-muted mb-1.5">
+            Comment le bot doit vendre ce palier (facultatif)
+          </span>
+          <textarea
+            className="input min-h-[70px] resize-y"
+            value={sellAngle}
+            onChange={(e) => setSellAngle(e.target.value)}
+            placeholder="Ex : insiste sur l'exclusivité, contenu qu'on ne trouve nulle part ailleurs"
+            maxLength={400}
+          />
         </label>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -1343,6 +1415,117 @@ function TelegramTab({ creator, onChanged }: { creator: Creator; onChanged: () =
 }
 
 // ------------------------------------------------------------------
+
+type FanSummary = {
+  chatId: string;
+  messageCount: number;
+  firstSeenAt: string;
+  lastActiveAt: string;
+  notes: string;
+  potential: string | null;
+};
+
+// "il y a 2h" plutôt qu'une date brute — plus rapide à scanner pour repérer
+// d'un coup d'œil qui a écrit récemment dans une liste de fans.
+function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `il y a ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `il y a ${days}j`;
+  return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+
+const POTENTIAL_STYLES: Record<string, string> = {
+  élevé: "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30",
+  moyen: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
+  faible: "bg-surface-2 text-muted border border-border",
+};
+
+function FansTab() {
+  const [fans, setFans] = useState<FanSummary[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/fans")
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled) setFans(json.fans || []);
+      })
+      .catch(() => {
+        if (!cancelled) setFans([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h2 className="text-lg font-medium mb-1">Fans</h2>
+        <p className="text-sm text-muted">
+          Ce que le bot retient de chaque conversation — utile pour savoir qui
+          est engagé et à qui parler en priorité. Les notes et le potentiel se
+          mettent à jour automatiquement au fil de la conversation, pas en
+          temps réel : laissez à une nouvelle discussion quelques échanges
+          avant de la voir apparaître ici.
+        </p>
+      </div>
+
+      {fans === null && (
+        <div className="space-y-3">
+          <div className="h-20 rounded-xl bg-surface-2 animate-pulse" />
+          <div className="h-20 rounded-xl bg-surface-2 animate-pulse" />
+        </div>
+      )}
+
+      {fans !== null && fans.length === 0 && (
+        <EmptyState
+          icon="💬"
+          title="Pas encore de conversation"
+          hint="Dès que quelqu'un discute avec votre bot, il apparaîtra ici avec un résumé de ce qu'il retient de la conversation."
+        />
+      )}
+
+      {fans !== null && fans.length > 0 && (
+        <div className="space-y-3">
+          {fans.map((f) => (
+            <div key={f.chatId} className="card p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium">
+                    {f.messageCount} message{f.messageCount > 1 ? "s" : ""}
+                  </span>
+                  <span className="text-xs text-muted">· actif {timeAgo(f.lastActiveAt)}</span>
+                </div>
+                {f.potential && (
+                  <span
+                    className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${
+                      POTENTIAL_STYLES[f.potential] || POTENTIAL_STYLES.faible
+                    }`}
+                  >
+                    Potentiel {f.potential}
+                  </span>
+                )}
+              </div>
+              {f.notes ? (
+                <p className="text-sm text-muted">{f.notes}</p>
+              ) : (
+                <p className="text-xs text-muted italic">
+                  Pas encore assez d&apos;échanges pour un résumé.
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PERIODS = [7, 14, 30, 90] as const;
 

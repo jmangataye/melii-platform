@@ -17,6 +17,11 @@ export async function POST(req: NextRequest) {
   const label = typeof body?.label === "string" ? body.label.trim() : "";
   const priceEuros = Number(body?.priceEuros);
   const url = typeof body?.url === "string" ? body.url.trim() : "";
+  // Optionnel : si absent du corps (ex. réordonnancement, qui ne renvoie pas
+  // ce champ), upsertTier conserve la valeur déjà enregistrée plutôt que de
+  // l'effacer — voir le commentaire dans packages/db/index.js.
+  const sellAngle =
+    typeof body?.sellAngle === "string" ? body.sellAngle.trim().slice(0, 400) : undefined;
 
   if (!Number.isInteger(order) || order < 1) {
     return NextResponse.json({ error: "Numéro de palier invalide." }, { status: 400 });
@@ -41,6 +46,7 @@ export async function POST(req: NextRequest) {
     priceCents: Math.round(priceEuros * 100),
     currency: "EUR",
     url: parsedUrl.toString(),
+    sellAngle,
   });
 
   return NextResponse.json({ tier });

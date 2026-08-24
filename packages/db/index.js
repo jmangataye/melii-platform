@@ -417,6 +417,7 @@ function rowToTier(row) {
     priceCents: row.price_cents,
     currency: row.currency,
     url: row.url,
+    sellAngle: row.sell_angle || "",
     createdAt: row.created_at,
   };
 }
@@ -434,26 +435,30 @@ async function getTierById(tierId) {
   return rowToTier(rows[0]);
 }
 
-async function upsertTier(creatorId, { order, label, priceCents, currency, url }) {
+async function upsertTier(creatorId, { order, label, priceCents, currency, url, sellAngle }) {
   const { rows: existingRows } = await query(
-    'SELECT id FROM tiers WHERE creator_id = $1 AND "order" = $2',
+    'SELECT id, sell_angle FROM tiers WHERE creator_id = $1 AND "order" = $2',
     [creatorId, order]
   );
 
   if (existingRows[0]) {
+    // sellAngle indéfini (ex. ancien appel qui ne l'envoie pas encore) ne
+    // doit pas effacer une valeur déjà enregistrée — même logique que
+    // updateCreatorProfile pour galleryUrls (voir plus haut dans ce fichier).
+    const nextSellAngle = sellAngle === undefined ? existingRows[0].sell_angle : sellAngle;
     await query(
-      `UPDATE tiers SET label = $1, price_cents = $2, currency = $3, url = $4
-       WHERE id = $5`,
-      [label, priceCents, currency || "EUR", url, existingRows[0].id]
+      `UPDATE tiers SET label = $1, price_cents = $2, currency = $3, url = $4, sell_angle = $5
+       WHERE id = $6`,
+      [label, priceCents, currency || "EUR", url, nextSellAngle || "", existingRows[0].id]
     );
     return getTierById(existingRows[0].id);
   }
 
   const tierId = id();
   await query(
-    `INSERT INTO tiers (id, creator_id, "order", label, price_cents, currency, url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [tierId, creatorId, order, label, priceCents, currency || "EUR", url]
+    `INSERT INTO tiers (id, creator_id, "order", label, price_cents, currency, url, sell_angle)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [tierId, creatorId, order, label, priceCents, currency || "EUR", url, sellAngle || ""]
   );
   return getTierById(tierId);
 }
@@ -740,6 +745,83 @@ async function purgeOldConversations(days = 90) {
     [days]
   );
   return rowCount;
+}
+
+// --- Mémoire légère par fan (CRM minimal) --------------------------------
+
+function rowToFanProfile(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    creatorId: row.creator_id,
+    chatId: row.chat_id,
+    notes: row.notes,
+    potential: row.potential,
+    summarizedThrough: row.summarized_through,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function getFanProfile(creatorId, chatId) {
+  const { rows } = await query(
+    `SELECT * FROM fan_profiles WHERE creator_id = $1 AND chat_id = $2`,
+    [creatorId, String(chatId)]
+  );
+  return rowToFanProfile(rows[0]);
+}
+
+// Nombre total de messages (user + assistant confondus) échangés dans cette
+// conversation — sert à décider, côté chat-engine, s'il est temps de
+// régénérer le résumé (voir summarized_through dans schema.js).
+async function getMessageCountForChat(creatorId, chatId) {
+  const { rows } = await query(
+    `SELECT COUNT(*) as n FROM conversation_messages WHERE creator_id = $1 AND chat_id = $2`,
+    [creatorId, String(chatId)]
+  );
+  return Number(rows[0].n);
+}
+
+async function upsertFanNotes(creatorId, chatId, { notes, potential, summarizedThrough }) {
+  await query(
+    `INSERT INTO fan_profiles (id, creator_id, chat_id, notes, potential, summarized_through)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (creator_id, chat_id) DO UPDATE
+       SET notes = $4, potential = $5, summarized_through = $6, updated_at = now()`,
+    [id(), creatorId, String(chatId), notes || "", potential || null, summarizedThrough || 0]
+  );
+}
+
+// Vue "Fans" du dashboard : une ligne par conversation (chat_id), avec
+// l'activité mesurée directement sur conversation_messages (pas besoin d'un
+// compteur dupliqué) et les notes/potentiel joints depuis fan_profiles quand
+// ils existent déjà (un fan tout juste arrivé, avant le premier seuil de
+// résumé, apparaît quand même — juste sans notes pour l'instant). Bornée par
+// `limit` : une créatrice avec une longue histoire peut avoir beaucoup de
+// conversations distinctes, pas la peine de toutes les charger d'un coup.
+async function listFanProfiles(creatorId, limit = 100) {
+  const { rows } = await query(
+    `SELECT cm.chat_id,
+            COUNT(*) as message_count,
+            MIN(cm.created_at) as first_seen_at,
+            MAX(cm.created_at) as last_active_at,
+            COALESCE(fp.notes, '') as notes,
+            fp.potential as potential
+     FROM conversation_messages cm
+     LEFT JOIN fan_profiles fp ON fp.creator_id = cm.creator_id AND fp.chat_id = cm.chat_id
+     WHERE cm.creator_id = $1
+     GROUP BY cm.chat_id, fp.notes, fp.potential
+     ORDER BY MAX(cm.created_at) DESC
+     LIMIT $2`,
+    [creatorId, limit]
+  );
+  return rows.map((r) => ({
+    chatId: r.chat_id,
+    messageCount: Number(r.message_count),
+    firstSeenAt: r.first_seen_at,
+    lastActiveAt: r.last_active_at,
+    notes: r.notes,
+    potential: r.potential,
+  }));
 }
 
 // --- Vue d'ensemble pour le dashboard admin -------------------------------
@@ -1113,6 +1195,10 @@ module.exports = {
   findStalledTelegramConversations,
   recordRelanceSent,
   updateCreatorRelance,
+  getFanProfile,
+  getMessageCountForChat,
+  upsertFanNotes,
+  listFanProfiles,
   // Exporté uniquement pour les tests (voir new-features.test.js) — le
   // backfill réel passe par ensureBackfilled(), mis en cache par process ;
   // ce export permet de le redéclencher explicitement dans un test sans

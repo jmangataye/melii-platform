@@ -1,6 +1,34 @@
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { getCreatorBySlugOrId, logLinkVisit } from "@melii/db";
 import ChatWidget from "./ChatWidget";
+
+// Sans ce generateMetadata, la page héritait du titre/description par défaut
+// du layout racine ("Melii — bots IA pour créatrices" / "...un chatbot IA à
+// votre image...") — visible dans l'onglet du navigateur ET dans l'aperçu de
+// lien quand ce lien est collé sur Telegram/Instagram/etc., AVANT même que la
+// personne ait cliqué. Ça grillait tout le soin mis à ne jamais exposer le
+// mot "bot" une fois dans la conversation. Ici, le titre/l'aperçu sont
+// personnalisés par créatrice et ne mentionnent jamais "bot"/"chatbot".
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ creatorId: string }>;
+}): Promise<Metadata> {
+  const { creatorId } = await params;
+  const creator = await getCreatorBySlugOrId(creatorId);
+  if (!creator) return {};
+
+  const title = creator.displayName;
+  const description = `Discute avec ${creator.displayName}.`;
+
+  return {
+    title,
+    description,
+    openGraph: { title, description },
+    twitter: { card: "summary_large_image", title, description },
+  };
+}
 
 // Le "?src=" est du texte libre saisi par la créatrice (voir le générateur
 // de liens tagués dans l'onglet Chat en ligne du dashboard) — on le borne et

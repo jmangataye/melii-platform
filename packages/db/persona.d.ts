@@ -13,8 +13,9 @@ export function buildSystemPrompt(input: {
   creatorName: string;
   tone: string;
   bio: string;
-  tiers: { order: number; label: string; priceCents: number; currency: string; shortUrl: string }[];
+  tiers: { order: number; label: string; priceCents: number; currency: string; shortUrl: string; sellAngle?: string }[];
   language?: string;
+  fanNotes?: string | null;
 }): string;
 
 export function containsSafetyKeyword(text: string): boolean;

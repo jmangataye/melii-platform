@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS tiers (
   UNIQUE (creator_id, "order")
 );
 
+-- Argument de vente propre à ce palier (facultatif) : ce que la créatrice
+-- écrit ici est injecté dans le prompt système du bot (voir buildSystemPrompt
+-- dans persona.js) pour que la présentation de CE palier précis soit
+-- pertinente, plutôt qu'un simple libellé + prix. Vide par défaut pour ne
+-- rien changer au comportement des paliers déjà créés.
+ALTER TABLE tiers ADD COLUMN IF NOT EXISTS sell_angle TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS click_events (
   id               TEXT PRIMARY KEY,
   creator_id       TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
@@ -139,3 +146,25 @@ CREATE TABLE IF NOT EXISTS link_visits (
 
 CREATE INDEX IF NOT EXISTS idx_link_visits_creator
   ON link_visits (creator_id, created_at);
+
+-- Mémoire légère par fan (une ligne par conversation, identifiée par
+-- chat_id) : un résumé texte évolutif ("notes") et une estimation de
+-- potentiel, régénérés périodiquement par l'IA à partir de l'historique de
+-- conversation (voir maybeUpdateFanProfile dans lib/chat-engine.ts) plutôt
+-- qu'à chaque message — pour garder le coût d'appel modèle sous contrôle.
+-- summarized_through retient le nombre de messages déjà pris en compte lors
+-- du dernier résumé, pour savoir quand il est temps d'en refaire un.
+CREATE TABLE IF NOT EXISTS fan_profiles (
+  id                 TEXT PRIMARY KEY,
+  creator_id         TEXT NOT NULL REFERENCES creators(id) ON DELETE CASCADE,
+  chat_id            TEXT NOT NULL,
+  notes              TEXT NOT NULL DEFAULT '',
+  potential          TEXT,
+  summarized_through INTEGER NOT NULL DEFAULT 0,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (creator_id, chat_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fan_profiles_creator
+  ON fan_profiles (creator_id, updated_at DESC);
