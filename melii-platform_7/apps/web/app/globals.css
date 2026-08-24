@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0f;
+  --surface: #12121a;
+  --surface-2: #191924;
+  --border: #26262f;
+  --foreground: #f4f4f6;
+  --muted: #9b9ba8;
+  --accent: #ff4d8d;
+  --accent-2: #7c5cff;
+  /* Couleurs de statut cohérentes, utilisées par StatusPill/Toast (ui.tsx) —
+     avant ça chaque écran improvisait sa propre nuance de vert/rouge inline,
+     ce qui rendait les états visuellement incohérents d'un onglet à l'autre. */
+  --success: #34d399;
+  --success-bg: rgba(52, 211, 153, 0.12);
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.12);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gradient-btn {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.gradient-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow: 0 8px 24px -8px rgba(255, 77, 141, 0.45);
+}
+
+.gradient-btn:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.97);
+}
+
+.glow {
+  box-shadow: 0 0 0 1px var(--border), 0 20px 60px -20px rgba(255, 77, 141, 0.25);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+}
+
+/* Légère élévation au survol pour les cartes purement informatives (étapes,
+   tons de personnalité...) — pas appliqué à `.card` globalement car certaines
+   cartes ne sont pas interactives (ex. le conteneur du chat) et un effet de
+   survol y serait trompeur. */
+.card-hover {
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-2);
+}
+
+.input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.65rem 1rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+/* Indicateur de frappe du chat public — trois points qui rebondissent en
+   décalé, façon Messenger/iMessage/Telegram, pour signaler visuellement que
+   le bot répond plutôt qu'un simple "..." statique. */
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Écran de chargement global (voir app/loading.tsx) — le "m" du logo pulse
+   doucement pendant que Next.js prépare le contenu réel de la page, plutôt
+   qu'un spinner générique sans lien avec la marque. */
+@keyframes logo-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.92);
+    opacity: 0.7;
+  }
+}
+
+.loading-logo {
+  animation: logo-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fade-in-up 0.4s ease both;
+}
+
+/* Toasts (voir ToastProvider dans dashboard/ui.tsx) — glissent depuis le bas
+   sur mobile et depuis la droite sur desktop pour rester dans le flux naturel
+   du regard sans jamais couvrir un bouton d'action en cours d'usage. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-in {
+  animation: toast-in 0.2s ease both;
+}
+
+/* Léger fondu pour les modales de confirmation (ConfirmModal) — évite
+   l'apparition brutale d'un panneau qui bloque l'écran. */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-in {
+  animation: modal-in 0.15s ease both;
+}
